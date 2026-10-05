@@ -145,9 +145,9 @@ void check_no_empty_keys(const TypeToDurationMap& type_to_duration,
   }
 }
 
-inline std::vector<Job> get_unassigned_jobs_from_ranks(
-  const Input& input,
-  const std::unordered_set<Index>& unassigned_ranks) {
+inline std::vector<Job>
+get_unassigned_jobs_from_ranks(const Input& input,
+                               const std::set<Index>& unassigned_ranks) {
   std::vector<Job> unassigned_jobs;
   std::ranges::transform(unassigned_ranks,
                          std::back_inserter(unassigned_jobs),
@@ -161,7 +161,7 @@ Solution format_solution(const Input& input, const RawSolution& raw_routes) {
   routes.reserve(raw_routes.size());
 
   // All job ranks start with unassigned status.
-  std::unordered_set<Index> unassigned_ranks;
+  std::set<Index> unassigned_ranks;
   for (unsigned i = 0; i < input.jobs.size(); ++i) {
     unassigned_ranks.insert(i);
   }
@@ -325,7 +325,7 @@ Solution format_solution(const Input& input, const RawSolution& raw_routes) {
 
 Route format_route(const Input& input,
                    const TWRoute& tw_r,
-                   std::unordered_set<Index>& unassigned_ranks) {
+                   std::set<Index>& unassigned_ranks) {
   const auto& v = input.vehicles[tw_r.v_rank];
 
   assert(tw_r.size() <= v.max_tasks);
@@ -333,7 +333,7 @@ Route format_route(const Input& input,
   // ETA logic: aim at earliest possible arrival then determine latest
   // possible start time in order to minimize waiting times.
   Duration step_start = tw_r.earliest_end;
-  Duration backward_wt = 0;
+  [[maybe_unused]] Duration backward_wt = 0;
   std::optional<Location> first_location;
   std::optional<Location> last_location;
 
@@ -485,12 +485,12 @@ Route format_route(const Input& input,
 
   // Values summed up while going through the route.
   Eval eval_sum;
-  Duration duration = 0;
+  [[maybe_unused]] Duration duration = 0;
   UserDuration user_duration = 0;
   UserDuration user_waiting_time = 0;
   Duration setup = 0;
   Duration service = 0;
-  Duration forward_wt = 0;
+  [[maybe_unused]] Duration forward_wt = 0;
   Priority priority = 0;
   Amount sum_pickups(input.zero_amount());
   Amount sum_deliveries(input.zero_amount());
@@ -580,11 +580,14 @@ Route format_route(const Input& input,
       user_duration += user_travel_time;
       current_break.duration = user_duration;
 
-      // Pro rata temporis distance increase.
-      if (current_eval.duration != 0) {
+      // Pro rata temporis distance increase. Guard on the actual
+      // divisor: a non-zero internal duration may scale down to 0.
+      if (const auto user_eval_duration =
+            scale_to_user_duration(current_eval.duration);
+          user_eval_duration != 0) {
         user_distance += round<UserDistance>(
           static_cast<double>(user_travel_time * current_eval.distance) /
-          scale_to_user_duration(current_eval.duration));
+          user_eval_duration);
       }
       current_break.distance = user_distance;
 
@@ -740,11 +743,14 @@ Route format_route(const Input& input,
     user_duration += user_travel_time;
     current_break.duration = user_duration;
 
-    // Pro rata temporis distance increase.
-    if (current_eval.duration != 0) {
+    // Pro rata temporis distance increase. Guard on the actual
+    // divisor: a non-zero internal duration may scale down to 0.
+    if (const auto user_eval_duration =
+          scale_to_user_duration(current_eval.duration);
+        user_eval_duration != 0) {
       user_distance += round<UserDistance>(
         static_cast<double>(user_travel_time * current_eval.distance) /
-        scale_to_user_duration(current_eval.duration));
+        user_eval_duration);
     }
     current_break.distance = user_distance;
 
@@ -814,7 +820,7 @@ Solution format_solution(const Input& input, const TWSolution& tw_routes) {
   routes.reserve(tw_routes.size());
 
   // All job ranks start with unassigned status.
-  std::unordered_set<Index> unassigned_ranks;
+  std::set<Index> unassigned_ranks;
   for (unsigned i = 0; i < input.jobs.size(); ++i) {
     unassigned_ranks.insert(i);
   }

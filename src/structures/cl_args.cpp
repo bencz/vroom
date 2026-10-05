@@ -14,18 +14,41 @@ All rights reserved (see LICENSE).
 
 namespace vroom::io {
 
+namespace {
+
+// Remove a leading "http://" or "https://" scheme from value, if
+// any. Note: HTTPS is only used based on port value.
+bool remove_scheme(std::string_view& value) {
+  for (const std::string_view scheme : {"http://", "https://"}) {
+    if (value.starts_with(scheme)) {
+      value.remove_prefix(scheme.size());
+      return true;
+    }
+  }
+  return false;
+}
+
+} // namespace
+
 void update_host(Servers& servers, std::string_view value) {
-  // Determine profile and host from a "car:0.0.0.0"-like value.
+  // Determine profile and host from a "car:0.0.0.0"-like value,
+  // possibly with a scheme as in "https://0.0.0.0" or
+  // "car:https://0.0.0.0".
   std::string profile = DEFAULT_PROFILE;
   std::string host;
   std::string path;
 
-  auto index = value.find(':');
+  std::size_t index = std::string::npos;
+  if (!remove_scheme(value)) {
+    index = value.find(':');
+  }
   if (index == std::string::npos) {
     host = value;
   } else {
     profile = value.substr(0, index);
-    host = value.substr(index + 1);
+    std::string_view host_value = value.substr(index + 1);
+    remove_scheme(host_value);
+    host = host_value;
   }
 
   if (!host.empty()) {

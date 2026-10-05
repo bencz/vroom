@@ -22,7 +22,7 @@ struct Eval {
   Distance distance;
   Duration task_duration;
 
-  constexpr Eval() : cost(0), duration(0), distance(0), task_duration(0){};
+  constexpr Eval() : cost(0), duration(0), distance(0), task_duration(0) {};
 
   constexpr explicit Eval(Cost cost,
                           Duration duration = 0,
@@ -31,7 +31,7 @@ struct Eval {
     : cost(cost),
       duration(duration),
       distance(distance),
-      task_duration(task_duration){};
+      task_duration(task_duration) {};
 
   Eval& operator+=(const Eval& rhs) {
     cost += rhs.cost;

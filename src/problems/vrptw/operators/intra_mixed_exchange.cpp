@@ -80,8 +80,4 @@ void IntraMixedExchange::apply() {
                       _last_rank);
 }
 
-std::vector<Index> IntraMixedExchange::addition_candidates() const {
-  return {s_vehicle};
-}
-
 } // namespace vroom::vrptw

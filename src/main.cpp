@@ -7,6 +7,8 @@ All rights reserved (see LICENSE).
 
 */
 
+#include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -113,14 +115,26 @@ int main(int argc, char** argv) {
     try {
       if (!limit_arg.empty()) {
         // Internally timeout is in milliseconds.
-        constexpr unsigned s_to_ms = 1000;
-        cl_args.timeout =
-          std::chrono::milliseconds(static_cast<std::chrono::milliseconds::rep>(
-            s_to_ms * std::stof(limit_arg)));
+        constexpr double s_to_ms = 1000;
+        // Upper bound way above any meaningful value, only meant to
+        // avoid overflow in conversion.
+        constexpr double max_limit = 1e9;
+        std::size_t pos;
+        const double limit = std::stod(limit_arg, &pos);
+        if (pos != limit_arg.size() || !std::isfinite(limit) || limit < 0 ||
+            max_limit < limit) {
+          throw std::invalid_argument(limit_arg);
+        }
+        cl_args.timeout = std::chrono::milliseconds(
+          static_cast<std::chrono::milliseconds::rep>(s_to_ms * limit));
       }
     } catch (const std::exception&) {
       throw cxxopts::exceptions::exception("Argument '" + limit_arg +
                                            "' failed to parse");
+    }
+
+    if (cl_args.nb_threads == 0) {
+      throw cxxopts::exceptions::exception("Argument '0' for threads");
     }
 
     if (parsed_args.count("help") != 0) {

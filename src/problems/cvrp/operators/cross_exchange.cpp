@@ -35,10 +35,11 @@ CrossExchange::CrossExchange(const Input& input,
     // check_t_reverse are false.
     check_s_reverse(check_s_reverse),
     check_t_reverse(check_t_reverse),
-    source_delivery(_input.jobs[this->s_route[s_rank]].delivery +
-                    _input.jobs[this->s_route[s_rank + 1]].delivery),
-    target_delivery(_input.jobs[this->t_route[t_rank]].delivery +
-                    _input.jobs[this->t_route[t_rank + 1]].delivery) {
+    // Only single jobs amounts are relevant for capacity checks as a
+    // moved pickup and delivery pair has no impact on load outside
+    // the moved edge.
+    source_delivery(this->source.delivery_in_range(s_rank, s_rank + 2)),
+    target_delivery(this->target.delivery_in_range(t_rank, t_rank + 2)) {
   assert(s_vehicle != t_vehicle);
   assert(s_route.size() >= 2);
   assert(t_route.size() >= 2);
@@ -151,8 +152,7 @@ void CrossExchange::compute_gain() {
 bool CrossExchange::is_valid() {
   assert(_gain_upper_bound_computed);
 
-  auto target_pickup = _input.jobs[t_route[t_rank]].pickup +
-                       _input.jobs[t_route[t_rank + 1]].pickup;
+  const auto target_pickup = target.pickup_in_range(t_rank, t_rank + 2);
 
   bool valid = source.is_valid_addition_for_capacity_margins(_input,
                                                              target_pickup,
@@ -191,8 +191,7 @@ bool CrossExchange::is_valid() {
     valid = s_is_normal_valid || s_is_reverse_valid;
   }
 
-  auto source_pickup = _input.jobs[s_route[s_rank]].pickup +
-                       _input.jobs[s_route[s_rank + 1]].pickup;
+  const auto source_pickup = source.pickup_in_range(s_rank, s_rank + 2);
 
   valid =
     valid && target.is_valid_addition_for_capacity_margins(_input,

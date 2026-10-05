@@ -16,7 +16,7 @@ struct Matrices {
   Matrix<UserDuration> durations;
   Matrix<UserDistance> distances;
 
-  explicit Matrices(std::size_t n) : durations(n), distances(n){};
+  explicit Matrices(std::size_t n) : durations(n), distances(n) {};
 };
 
 } // namespace vroom::routing

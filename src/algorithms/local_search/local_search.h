@@ -10,6 +10,8 @@ All rights reserved (see LICENSE).
 
 */
 
+#include <random>
+
 #include "structures/vroom/solution_indicators.h"
 #include "structures/vroom/solution_state.h"
 
@@ -58,6 +60,18 @@ private:
 
   void run_ls_step();
 
+  // _close_routes[v1][v2] is true if a job in route for vehicle v1 is
+  // among closest neighbors of a job in route for vehicle v2 (or the
+  // other way around). Only used when some locations have no
+  // coordinates, otherwise route bounding boxes are used.
+  std::vector<std::vector<unsigned char>> _close_routes;
+  std::vector<Index> _job_vehicle;
+  void update_close_routes();
+
+  // Decide whether moves between routes for source and target are
+  // worth checking, based on routes proximity.
+  bool routes_may_interact(Index source, Index target) const;
+
   // Compute "cost" between route at rank v_target and job with rank r
   // in route at rank v. Relies on
   // _sol_state.cheapest_job_rank_in_routes_* being up to date.
@@ -70,6 +84,12 @@ private:
   Eval relocate_cost_lower_bound(Index v, Index r1, Index r2);
 
   void remove_from_routes();
+
+  // Used once the regular perturbation scheme is exhausted while
+  // there is still time left: randomly remove strings of consecutive
+  // jobs in a few close routes.
+  std::mt19937 _rng;
+  void remove_random_strings();
 
 public:
   LocalSearch(const Input& input,

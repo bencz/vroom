@@ -179,7 +179,9 @@ void IntraOrOpt::apply() {
 }
 
 std::vector<Index> IntraOrOpt::addition_candidates() const {
-  return {};
+  // Route may get shorter, leaving room for additions with regard to
+  // vehicle range bounds or time windows.
+  return {s_vehicle};
 }
 
 std::vector<Index> IntraOrOpt::update_candidates() const {

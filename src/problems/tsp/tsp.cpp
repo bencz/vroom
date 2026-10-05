@@ -16,9 +16,9 @@ All rights reserved (see LICENSE).
 
 namespace vroom {
 
-UserCost compute_cost(const std::list<Index>& tour,
-                      const Matrix<UserCost>& matrix) {
-  UserCost cost = 0;
+Cost compute_cost(const std::list<Index>& tour,
+                  const Matrix<UserCost>& matrix) {
+  Cost cost = 0;
   Index init_step = 0; // Initialization actually never used.
 
   auto step = tour.cbegin();
@@ -154,12 +154,29 @@ TSP::TSP(const Input& input, std::vector<Index>&& job_ranks, Index vehicle_rank)
   }
 }
 
-UserCost TSP::cost(const std::list<Index>& tour) const {
+Cost TSP::cost(const std::list<Index>& tour) const {
   return compute_cost(tour, _matrix);
 }
 
-UserCost TSP::symmetrized_cost(const std::list<Index>& tour) const {
+Cost TSP::symmetrized_cost(const std::list<Index>& tour) const {
   return compute_cost(tour, _symmetrized_matrix);
+}
+
+void TSP::force_end_last(std::list<Index>& tour) const {
+  if (_round_trip || !_has_start || !_has_end) {
+    return;
+  }
+  assert(!tour.empty() && tour.front() == _start);
+
+  // The end -> start edge is only enforced through costs, so it may
+  // not be in place if local search did not reach that point, e.g. due
+  // to timeout.
+  if (tour.back() != _end) {
+    const auto end_it = std::ranges::find(tour, _end);
+    assert(end_it != tour.end());
+    tour.erase(end_it);
+    tour.push_back(_end);
+  }
 }
 
 std::vector<Index> TSP::raw_solve(unsigned nb_threads,
@@ -200,9 +217,9 @@ std::vector<Index> TSP::raw_solve(unsigned nb_threads,
                           christo_sol,
                           nb_threads);
 
-  UserCost sym_two_opt_gain = 0;
-  UserCost sym_relocate_gain = 0;
-  UserCost sym_or_opt_gain = 0;
+  Cost sym_two_opt_gain = 0;
+  Cost sym_relocate_gain = 0;
+  Cost sym_or_opt_gain = 0;
 
   do {
     // All possible 2-opt moves.
@@ -233,8 +250,15 @@ std::vector<Index> TSP::raw_solve(unsigned nb_threads,
     // Back to the asymmetric problem, picking the best way.
     std::list<Index> reverse_current_sol(current_sol);
     reverse_current_sol.reverse();
-    const UserCost direct_cost = this->cost(current_sol);
-    const UserCost reverse_cost = this->cost(reverse_current_sol);
+    if (!_round_trip && _has_start && _has_end) {
+      // Reversed list has to start at first location again.
+      reverse_current_sol.push_front(reverse_current_sol.back());
+      reverse_current_sol.pop_back();
+      force_end_last(current_sol);
+      force_end_last(reverse_current_sol);
+    }
+    const Cost direct_cost = this->cost(current_sol);
+    const Cost reverse_cost = this->cost(reverse_current_sol);
 
     // Local search on asymmetric problem.
     tsp::LocalSearch
@@ -243,10 +267,10 @@ std::vector<Index> TSP::raw_solve(unsigned nb_threads,
               (direct_cost <= reverse_cost) ? current_sol : reverse_current_sol,
               nb_threads);
 
-    UserCost asym_two_opt_gain = 0;
-    UserCost asym_relocate_gain = 0;
-    UserCost asym_or_opt_gain = 0;
-    UserCost asym_avoid_loops_gain = 0;
+    Cost asym_two_opt_gain = 0;
+    Cost asym_relocate_gain = 0;
+    Cost asym_or_opt_gain = 0;
+    Cost asym_avoid_loops_gain = 0;
 
     do {
       // All avoid-loops moves.
@@ -265,6 +289,8 @@ std::vector<Index> TSP::raw_solve(unsigned nb_threads,
 
     current_sol = asym_ls.get_tour(first_loc_index);
   }
+
+  force_end_last(current_sol);
 
   // Deal with open tour cases requiring adaptation.
   if (!_has_start && _has_end) {

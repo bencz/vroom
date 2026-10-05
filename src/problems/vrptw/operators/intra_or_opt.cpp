@@ -79,8 +79,4 @@ void IntraOrOpt::apply() {
                       _last_rank);
 }
 
-std::vector<Index> IntraOrOpt::addition_candidates() const {
-  return {s_vehicle};
-}
-
 } // namespace vroom::vrptw

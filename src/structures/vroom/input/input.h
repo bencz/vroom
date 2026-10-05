@@ -68,18 +68,30 @@ private:
     _distances_matrices;
   std::unordered_map<std::string, Matrix<UserCost>, StringHash, std::equal_to<>>
     _costs_matrices;
-  std::unordered_map<std::string, Cost, StringHash, std::equal_to<>>
-    _max_cost_per_hour;
+  // Profiles for which no distances are provided nor required, so
+  // all distances are considered zero.
+  std::unordered_set<std::string> _zero_distances_profiles;
+  // Maximum cost factors across vehicles for a given profile, used to
+  // derive a solution cost upper bound.
+  struct CostFactors {
+    Cost duration{0};
+    Cost distance{0};
+  };
+  std::unordered_map<std::string, CostFactors, StringHash, std::equal_to<>>
+    _max_cost_factors;
   Cost _cost_upper_bound{0};
   std::vector<Location> _locations;
   std::unordered_map<Location, Index> _locations_to_index;
   std::unordered_set<Location> _locations_used_several_times;
   std::vector<std::vector<unsigned char>> _vehicle_to_job_compatibility;
-  std::vector<std::vector<bool>> _vehicle_to_vehicle_compatibility;
+  std::vector<std::vector<unsigned char>> _vehicle_to_vehicle_compatibility;
   std::unordered_set<Index> _matrices_used_index;
   Index _max_matrices_used_index{0};
   bool _all_locations_have_coords{true};
   std::vector<std::vector<Eval>> _jobs_vehicles_evals;
+  // Closest jobs for each job, only computed when some locations
+  // have no coordinates.
+  std::vector<std::vector<Index>> _jobs_neighbors;
 
   // Default vehicle type is NO_TYPE, related to the fact that we do
   // not allow empty types as keys for jobs.
@@ -102,6 +114,12 @@ private:
   void check_amount_size(const Amount& amount);
   void check_job(Job& job);
 
+  // Set location index if required and store location, checking
+  // against Index limits.
+  void register_location(Location& location);
+
+  void check_jobs_number(std::size_t added_jobs) const;
+
   void run_basic_checks() const;
 
   UserCost check_cost_bound(const Matrix<UserCost>& matrix) const;
@@ -112,6 +130,8 @@ private:
   void set_vehicles_costs();
   void set_vehicles_max_tasks();
   void set_jobs_vehicles_evals();
+
+  void set_jobs_neighbors();
   void set_jobs_durations_per_vehicle_type();
   void set_vehicle_steps_ranks();
   void init_missing_matrices(const std::string& profile);
@@ -184,6 +204,14 @@ public:
 
   bool all_locations_have_coords() const {
     return _all_locations_have_coords;
+  }
+
+  bool has_jobs_neighbors() const {
+    return !_jobs_neighbors.empty();
+  }
+
+  const std::vector<Index>& job_neighbors(Index j) const {
+    return _jobs_neighbors[j];
   }
 
   const std::vector<std::vector<Eval>>& jobs_vehicles_evals() const {

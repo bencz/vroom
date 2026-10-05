@@ -29,8 +29,6 @@ public:
   bool is_valid() override;
 
   void apply() override;
-
-  std::vector<Index> addition_candidates() const override;
 };
 
 } // namespace vroom::vrptw

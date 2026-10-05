@@ -45,8 +45,4 @@ void IntraRelocate::apply() {
                       _last_rank);
 }
 
-std::vector<Index> IntraRelocate::addition_candidates() const {
-  return {s_vehicle};
-}
-
 } // namespace vroom::vrptw

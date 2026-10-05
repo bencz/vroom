@@ -14,7 +14,7 @@ namespace vroom::cvrp {
 
 UnassignedExchange::UnassignedExchange(const Input& input,
                                        const utils::SolutionState& sol_state,
-                                       std::unordered_set<Index>& unassigned,
+                                       std::set<Index>& unassigned,
                                        RawRoute& s_raw_route,
                                        Index s_vehicle,
                                        Index s_rank,

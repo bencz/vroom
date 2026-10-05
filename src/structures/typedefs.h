@@ -78,6 +78,13 @@ constexpr UserCost DEFAULT_COST_PER_TASK_HOUR = 0;
 constexpr UserCost DEFAULT_COST_PER_KM = 0;
 
 constexpr Priority MAX_PRIORITY = 100;
+// Maximum number of jobs, vehicles and locations, so that any
+// rank or index fits in an Index.
+constexpr std::size_t MAX_INDEX_VALUE = std::numeric_limits<Index>::max();
+
+// Number of closest jobs used to decide whether two routes are close
+// in local search when coordinates are not available.
+constexpr std::size_t JOBS_NEIGHBORS_NUMBER = 20;
 constexpr double MAX_SPEED_FACTOR = 5.0;
 constexpr unsigned MAX_EXPLORATION_LEVEL = 5;
 

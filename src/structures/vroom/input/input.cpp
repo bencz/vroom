@@ -38,7 +38,7 @@ void Input::set_geometry(bool geometry) {
   _geometry = geometry;
 }
 
-void Input::add_routing_wrapper(const std::string& profile) {
+void Input::add_routing_wrapper([[maybe_unused]] const std::string& profile) {
 #if !USE_ROUTING
   throw RoutingException("VROOM compiled without routing support.");
 #else
@@ -139,38 +139,41 @@ void Input::check_job(Job& job) {
   _has_TW = _has_TW || (!(job.tws.size() == 1) || !job.tws[0].is_default());
   _has_skills = _has_skills || !job.skills.empty();
 
-  if (!job.location.user_index()) {
-    // Index of job in the matrices is not specified in input, check
-    // for already stored location or assign new index.
-    auto search = _locations_to_index.find(job.location);
-    if (search != _locations_to_index.end()) {
+  register_location(job.location);
+}
+
+void Input::register_location(Location& location) {
+  const auto search = _locations_to_index.find(location);
+  if (search != _locations_to_index.end()) {
+    if (!location.user_index()) {
       // Using stored index for existing location.
-      job.location.set_index(search->second);
-      _locations_used_several_times.insert(job.location);
-    } else {
-      // Append new location and store corresponding index.
-      auto new_index = _locations.size();
-      job.location.set_index(new_index);
-      _locations.push_back(job.location);
-      _locations_to_index.try_emplace(job.location, new_index);
+      location.set_index(search->second);
     }
+    _locations_used_several_times.insert(location);
   } else {
-    // All jobs have a location_index in input, we only store
-    // locations in case one profile matrix is not provided in input
-    // and need to be computed.
-    auto search = _locations_to_index.find(job.location);
-    if (search == _locations_to_index.end()) {
-      _locations.push_back(job.location);
-      _locations_to_index.try_emplace(job.location, _locations.size() - 1);
-    } else {
-      _locations_used_several_times.insert(job.location);
+    if (_locations.size() == MAX_INDEX_VALUE) {
+      throw InputException(
+        std::format("Too many locations, maximum is {}.", MAX_INDEX_VALUE));
     }
+
+    // Append new location and store corresponding index. Index of
+    // location in the matrices is only set here if not specified in
+    // input. In case all locations have a location_index in input,
+    // we still store locations in case one profile matrix is not
+    // provided in input and need to be computed.
+    const auto new_index = static_cast<Index>(_locations.size());
+    if (!location.user_index()) {
+      location.set_index(new_index);
+    }
+    _locations.push_back(location);
+    _locations_to_index.try_emplace(location, new_index);
   }
 
-  _matrices_used_index.insert(job.index());
-  _max_matrices_used_index = std::max(_max_matrices_used_index, job.index());
+  _matrices_used_index.insert(location.index());
+  _max_matrices_used_index =
+    std::max(_max_matrices_used_index, location.index());
   _all_locations_have_coords =
-    _all_locations_have_coords && job.location.has_coordinates();
+    _all_locations_have_coords && location.has_coordinates();
 }
 
 void Input::run_basic_checks() const {
@@ -193,6 +196,7 @@ void Input::add_job(const Job& job) {
   if (job_id_to_rank.contains(job.id)) {
     throw InputException(std::format("Duplicate job id: {}.", job.id));
   }
+  check_jobs_number(1);
   job_id_to_rank[job.id] = jobs.size();
   jobs.push_back(job);
   check_job(jobs.back());
@@ -228,6 +232,8 @@ void Input::add_shipment(const Job& pickup, const Job& delivery) {
     }
   }
 
+  check_jobs_number(2);
+
   if (pickup.type != JOB_TYPE::PICKUP) {
     throw InputException(std::format("Wrong type for pickup {}.", pickup.id));
   }
@@ -252,7 +258,18 @@ void Input::add_shipment(const Job& pickup, const Job& delivery) {
   _has_shipments = true;
 }
 
+void Input::check_jobs_number(std::size_t added_jobs) const {
+  if (MAX_INDEX_VALUE - jobs.size() < added_jobs) {
+    throw InputException(
+      std::format("Too many tasks, maximum is {}.", MAX_INDEX_VALUE));
+  }
+}
+
 void Input::add_vehicle(const Vehicle& vehicle) {
+  if (vehicles.size() == MAX_INDEX_VALUE) {
+    throw InputException(
+      std::format("Too many vehicles, maximum is {}.", MAX_INDEX_VALUE));
+  }
   vehicles.push_back(vehicle);
 
   auto& current_v = vehicles.back();
@@ -272,40 +289,7 @@ void Input::add_vehicle(const Vehicle& vehicle) {
     has_location_index = start_loc.user_index();
     has_all_coordinates = start_loc.has_coordinates();
 
-    if (!start_loc.user_index()) {
-      // Index of start in the matrices is not specified in input,
-      // check for already stored location or assign new index.
-      assert(start_loc.has_coordinates());
-      auto search = _locations_to_index.find(start_loc);
-      if (search != _locations_to_index.end()) {
-        // Using stored index for existing location.
-        start_loc.set_index(search->second);
-        _locations_used_several_times.insert(start_loc);
-      } else {
-        // Append new location and store corresponding index.
-        auto new_index = _locations.size();
-        start_loc.set_index(new_index);
-        _locations.push_back(start_loc);
-        _locations_to_index.try_emplace(start_loc, new_index);
-      }
-    } else {
-      // All starts have a location_index in input, we only store
-      // locations in case one profile matrix is not provided in input
-      // and need to be computed.
-      auto search = _locations_to_index.find(start_loc);
-      if (search == _locations_to_index.end()) {
-        _locations.push_back(start_loc);
-        _locations_to_index.try_emplace(start_loc, _locations.size() - 1);
-      } else {
-        _locations_used_several_times.insert(start_loc);
-      }
-    }
-
-    _matrices_used_index.insert(start_loc.index());
-    _max_matrices_used_index =
-      std::max(_max_matrices_used_index, start_loc.index());
-    _all_locations_have_coords =
-      _all_locations_have_coords && start_loc.has_coordinates();
+    register_location(start_loc);
   }
 
   if (current_v.has_end()) {
@@ -320,40 +304,7 @@ void Input::add_vehicle(const Vehicle& vehicle) {
     has_location_index = end_loc.user_index();
     has_all_coordinates = has_all_coordinates && end_loc.has_coordinates();
 
-    if (!end_loc.user_index()) {
-      // Index of this end in the matrix was not specified upon
-      // vehicle creation.
-      assert(end_loc.has_coordinates());
-      auto search = _locations_to_index.find(end_loc);
-      if (search != _locations_to_index.end()) {
-        // Using stored index for existing location.
-        end_loc.set_index(search->second);
-        _locations_used_several_times.insert(end_loc);
-      } else {
-        // Append new location and store corresponding index.
-        auto new_index = _locations.size();
-        end_loc.set_index(new_index);
-        _locations.push_back(end_loc);
-        _locations_to_index.try_emplace(end_loc, new_index);
-      }
-    } else {
-      // All ends have a location_index in input, we only store
-      // locations in case one profile matrix is not provided in input
-      // and need to be computed.
-      auto search = _locations_to_index.find(end_loc);
-      if (search == _locations_to_index.end()) {
-        _locations.push_back(end_loc);
-        _locations_to_index.try_emplace(end_loc, _locations.size() - 1);
-      } else {
-        _locations_used_several_times.insert(end_loc);
-      }
-    }
-
-    _matrices_used_index.insert(end_loc.index());
-    _max_matrices_used_index =
-      std::max(_max_matrices_used_index, end_loc.index());
-    _all_locations_have_coords =
-      _all_locations_have_coords && end_loc.has_coordinates();
+    register_location(end_loc);
   }
 
   // Ensure that location index are either always or never provided.
@@ -387,12 +338,13 @@ void Input::add_vehicle(const Vehicle& vehicle) {
     _profiles_requiring_distances.insert(current_v.profile);
   }
 
-  if (auto search = _max_cost_per_hour.find(current_v.profile);
-      search == _max_cost_per_hour.end()) {
-    _max_cost_per_hour.try_emplace(current_v.profile, current_v.costs.per_hour);
-  } else {
-    search->second = std::max(search->second, current_v.costs.per_hour);
-  }
+  auto& cost_factors = _max_cost_factors[current_v.profile];
+  cost_factors.duration =
+    std::max(cost_factors.duration,
+             current_v.cost_wrapper.duration_cost_factor());
+  cost_factors.distance =
+    std::max(cost_factors.distance,
+             current_v.cost_wrapper.distance_cost_factor());
 
   // Store vehicle type stuff.
   const auto& type = current_v.type_str;
@@ -584,23 +536,27 @@ void Input::set_extra_compatibility() {
       }
 
       _vehicle_to_job_compatibility[v][j] = is_compatible;
+      if (is_compatible) {
+        compatible_vehicles_for_job[j].push_back(v);
+      }
+
       if (is_shipment_pickup) {
         // Skipping matching delivery which is next in line in jobs.
         _vehicle_to_job_compatibility[v][j + 1] = is_compatible;
+        if (is_compatible) {
+          compatible_vehicles_for_job[j + 1].push_back(v);
+        }
         ++j;
-      }
-
-      if (is_compatible) {
-        compatible_vehicles_for_job[j].push_back(v);
       }
     }
   }
 }
 
 void Input::set_vehicles_compatibility() {
-  _vehicle_to_vehicle_compatibility =
-    std::vector<std::vector<bool>>(vehicles.size(),
-                                   std::vector<bool>(vehicles.size(), false));
+  _vehicle_to_vehicle_compatibility = std::vector<
+    std::vector<unsigned char>>(vehicles.size(),
+                                std::vector<unsigned char>(vehicles.size(),
+                                                           false));
   for (std::size_t v1 = 0; v1 < vehicles.size(); ++v1) {
     _vehicle_to_vehicle_compatibility[v1][v1] = true;
     for (std::size_t v2 = v1 + 1; v2 < vehicles.size(); ++v2) {
@@ -622,9 +578,13 @@ void Input::set_vehicles_costs() {
     assert(duration_m != _durations_matrices.end());
     vehicle.cost_wrapper.set_durations_matrix(&(duration_m->second));
 
-    auto distance_m = _distances_matrices.find(vehicle.profile);
-    assert(distance_m != _distances_matrices.end());
-    vehicle.cost_wrapper.set_distances_matrix(&(distance_m->second));
+    if (auto distance_m = _distances_matrices.find(vehicle.profile);
+        distance_m != _distances_matrices.end()) {
+      vehicle.cost_wrapper.set_distances_matrix(&(distance_m->second));
+    } else {
+      // All distances are zero for this profile.
+      assert(_zero_distances_profiles.contains(vehicle.profile));
+    }
 
     auto c_m = _costs_matrices.find(vehicle.profile);
     if (c_m != _costs_matrices.end()) {
@@ -643,6 +603,41 @@ void Input::set_vehicles_costs() {
       vehicle.cost_wrapper.set_costs_matrix(&(c_m->second), reset_cost_factor);
     } else {
       vehicle.cost_wrapper.set_costs_matrix(&(duration_m->second));
+    }
+  }
+}
+
+void Input::set_jobs_neighbors() {
+  // Use costs for first vehicle as a proximity measure, considering
+  // both directions.
+  const auto& v = vehicles.front();
+  const auto nb_neighbors =
+    std::min(JOBS_NEIGHBORS_NUMBER, static_cast<std::size_t>(jobs.size() - 1));
+
+  _jobs_neighbors.assign(jobs.size(), std::vector<Index>());
+
+  std::vector<std::pair<Cost, Index>> candidates;
+  candidates.reserve(jobs.size());
+
+  for (Index j = 0; j < jobs.size(); ++j) {
+    const auto j_index = jobs[j].index();
+
+    candidates.clear();
+    for (Index other = 0; other < jobs.size(); ++other) {
+      if (other != j) {
+        const auto other_index = jobs[other].index();
+        candidates.emplace_back(std::min(v.cost(j_index, other_index),
+                                         v.cost(other_index, j_index)),
+                                other);
+      }
+    }
+
+    std::ranges::nth_element(candidates, candidates.begin() + nb_neighbors);
+
+    auto& neighbors = _jobs_neighbors[j];
+    neighbors.reserve(nb_neighbors);
+    for (std::size_t i = 0; i < nb_neighbors; ++i) {
+      neighbors.push_back(candidates[i].second);
     }
   }
 }
@@ -811,6 +806,9 @@ void Input::set_jobs_vehicles_evals() {
         if (start_index != j_index) {
           added_task_duration += job.setups[vehicle.type];
         }
+      } else {
+        // First task in route always requires setup.
+        added_task_duration += job.setups[vehicle.type];
       }
       if (vehicle.has_end()) {
         current_eval +=
@@ -985,9 +983,9 @@ void Input::init_missing_matrices(const std::string& profile) {
         create_routing_wrapper = true;
         _distances_matrices.try_emplace(profile);
       } else {
-        // Routing-less optimization with no distances involved,
-        // fill internal distances matrix with zeros.
-        _distances_matrices.try_emplace(profile, durations_m->second.size(), 0);
+        // Routing-less optimization with no distances involved, all
+        // distances are zero so there is no need to store a matrix.
+        _zero_distances_profiles.insert(profile);
       }
     }
   }
@@ -1003,10 +1001,6 @@ routing::Matrices Input::get_matrices_by_profile(const std::string& profile,
     return wr->profile == profile;
   });
   assert(rw != _routing_wrappers.end());
-
-  if (sparse_filling) {
-    _vehicles_geometry.resize(vehicles.size());
-  }
 
   // Note: get_sparse_matrices relies on getting in input *all*
   // vehicles as it refers to vehicle ranks to store geometries.
@@ -1062,6 +1056,11 @@ void Input::set_matrices(unsigned nb_thread, bool sparse_filling) {
     init_missing_matrices(profile);
   }
 
+  if (sparse_filling) {
+    // Done once here as get_matrices_by_profile may run concurrently.
+    _vehicles_geometry.resize(vehicles.size());
+  }
+
   std::exception_ptr ep = nullptr;
   std::mutex ep_m;
   std::mutex cost_bound_m;
@@ -1073,17 +1072,26 @@ void Input::set_matrices(unsigned nb_thread, bool sparse_filling) {
         auto distances_m = _distances_matrices.find(profile);
 
         // Required matrices not manually set have been defined as
-        // empty above in init_missing_matrices.
+        // empty above in init_missing_matrices, except for distances
+        // known to be zero.
+        const bool zero_distances = _zero_distances_profiles.contains(profile);
         assert(durations_m != _durations_matrices.end());
-        assert(distances_m != _distances_matrices.end());
+        assert(zero_distances || distances_m != _distances_matrices.end());
         const bool define_durations = (durations_m->second.size() == 0);
-        const bool define_distances = (distances_m->second.size() == 0);
+        const bool define_distances =
+          !zero_distances && (distances_m->second.size() == 0);
         assert(!define_durations || define_distances);
 
         if (define_durations || define_distances) {
           if (_locations.size() == 1 && !sparse_filling) {
-            durations_m->second = Matrix<UserDuration>(1);
-            distances_m->second = Matrix<UserDistance>(1);
+            // No need for routing, only zero values. Only replace
+            // matrices that are actually missing.
+            const std::size_t size =
+              _has_custom_location_index ? _max_matrices_used_index + 1 : 1;
+            if (define_durations) {
+              durations_m->second = Matrix<UserDuration>(size);
+            }
+            distances_m->second = Matrix<UserDistance>(size);
           } else {
             auto matrices = get_matrices_by_profile(profile, sparse_filling);
 
@@ -1132,7 +1140,8 @@ void Input::set_matrices(unsigned nb_thread, bool sparse_filling) {
             " profile.");
         }
 
-        if (distances_m->second.size() <= _max_matrices_used_index) {
+        if (!zero_distances &&
+            distances_m->second.size() <= _max_matrices_used_index) {
           throw InputException(
             "location_index exceeding distances matrix size for " + profile +
             " profile.");
@@ -1154,18 +1163,26 @@ void Input::set_matrices(unsigned nb_thread, bool sparse_filling) {
             std::max(_cost_upper_bound,
                      utils::scale_from_user_cost(current_bound));
         } else {
-          // Durations matrix will be used for costs.
-          const UserCost current_bound = check_cost_bound(durations_m->second);
+          // Durations and distances matrices will be used for costs.
+          auto search = _max_cost_factors.find(profile);
+          assert(search != _max_cost_factors.end());
+          const auto& factors = search->second;
 
-          auto search = _max_cost_per_hour.find(profile);
-          assert(search != _max_cost_per_hour.end());
-          const auto max_cost_per_hour_for_profile = search->second;
+          Cost current_bound =
+            utils::mul_without_overflow(factors.duration,
+                                        static_cast<Cost>(check_cost_bound(
+                                          durations_m->second)));
+          if (factors.distance != 0) {
+            const auto distance_bound =
+              utils::mul_without_overflow(factors.distance,
+                                          static_cast<Cost>(check_cost_bound(
+                                            distances_m->second)));
+            current_bound =
+              utils::add_without_overflow(current_bound, distance_bound);
+          }
 
           const std::scoped_lock<std::mutex> lock(cost_bound_m);
-          _cost_upper_bound =
-            std::max(_cost_upper_bound,
-                     max_cost_per_hour_for_profile *
-                       utils::scale_from_user_duration(current_bound));
+          _cost_upper_bound = std::max(_cost_upper_bound, current_bound);
         }
       }
     } catch (...) {
@@ -1188,6 +1205,27 @@ void Input::set_matrices(unsigned nb_thread, bool sparse_filling) {
   if (ep != nullptr) {
     std::rethrow_exception(ep);
   }
+
+  // Account for fixed and task costs in upper bound.
+  Cost fixed_bound = 0;
+  Cost task_bound = 0;
+  for (const auto& v : vehicles) {
+    fixed_bound = utils::add_without_overflow(fixed_bound, v.fixed_cost());
+
+    if (v.costs.per_task_hour != 0) {
+      Duration task_duration = 0;
+      for (const auto& j : jobs) {
+        task_duration += j.setups[v.type] + j.services[v.type];
+      }
+      task_bound = std::max(task_bound,
+                            utils::mul_without_overflow(v.costs.per_task_hour,
+                                                        task_duration));
+    }
+  }
+  _cost_upper_bound =
+    utils::add_without_overflow(_cost_upper_bound, fixed_bound);
+  _cost_upper_bound =
+    utils::add_without_overflow(_cost_upper_bound, task_bound);
 }
 
 std::unique_ptr<VRP> Input::get_problem() const {
@@ -1211,6 +1249,13 @@ Solution Input::solve(const unsigned nb_searches,
                       const unsigned depth,
                       const unsigned nb_thread,
                       const Timeout& timeout) {
+  if (nb_thread == 0) {
+    throw InputException("Number of threads should be at least 1.");
+  }
+  if (nb_searches == 0) {
+    throw InputException("Number of searches should be at least 1.");
+  }
+
   run_basic_checks();
 
   if (_has_initial_routes) {
@@ -1228,6 +1273,10 @@ Solution Input::solve(const unsigned nb_searches,
   set_vehicles_compatibility();
 
   set_jobs_vehicles_evals();
+
+  if (!_all_locations_have_coords) {
+    set_jobs_neighbors();
+  }
 
   // Add implicit max_tasks constraints derived from capacity and
   // TW. Note: rely on set_extra_compatibility being run previously to
@@ -1315,6 +1364,10 @@ Solution Input::solve(const unsigned nb_searches,
 
 Solution Input::check(unsigned nb_thread) {
 #if USE_LIBGLPK
+  if (nb_thread == 0) {
+    throw InputException("Number of threads should be at least 1.");
+  }
+
   run_basic_checks();
 
   set_jobs_durations_per_vehicle_type();

@@ -51,6 +51,8 @@ void RawRoute::update_amounts(const Input& input) {
     // So that check against break max_load and margins computations
     // are consistent with empty routes.
     std::ranges::fill(_current_loads, _zero);
+    _delivery_margin = capacity;
+    _pickup_margin = capacity;
     return;
   }
 
@@ -130,17 +132,12 @@ void RawRoute::update_amounts(const Input& input) {
     _bwd_peaks[bwd_s] = peak;
   }
 
-  if (route.empty()) {
-    _delivery_margin = capacity;
-    _pickup_margin = capacity;
-  } else {
-    assert(!_fwd_pickups.empty());
-    const auto& pickups_sum = _fwd_pickups.back();
+  assert(!_fwd_pickups.empty());
+  const auto& pickups_sum = _fwd_pickups.back();
 
-    for (unsigned i = 0; i < _zero.size(); ++i) {
-      _delivery_margin[i] = capacity[i] - _current_loads[0][i];
-      _pickup_margin[i] = capacity[i] - pickups_sum[i];
-    }
+  for (unsigned i = 0; i < _zero.size(); ++i) {
+    _delivery_margin[i] = capacity[i] - _current_loads[0][i];
+    _pickup_margin[i] = capacity[i] - pickups_sum[i];
   }
 }
 
@@ -184,7 +181,7 @@ bool RawRoute::is_valid_addition_for_capacity_margins(
   const Index first_rank,
   const Index last_rank) const {
   assert(1 <= last_rank);
-  assert(last_rank <= route.size() + 1);
+  assert(last_rank <= route.size());
 
   const auto& first_deliveries =
     (first_rank == 0) ? _current_loads[0] : _bwd_deliveries[first_rank - 1];
@@ -209,7 +206,7 @@ bool RawRoute::is_valid_addition_for_capacity_inclusion(
   const Index first_rank,
   const Index last_rank) const {
   assert(first_rank <= last_rank);
-  assert(last_rank <= route.size() + 1);
+  assert(last_rank <= route.size());
 
   const auto& init_load = (route.empty()) ? _zero : _current_loads[0];
 

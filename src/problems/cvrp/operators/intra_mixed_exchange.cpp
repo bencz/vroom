@@ -196,7 +196,9 @@ void IntraMixedExchange::apply() {
 }
 
 std::vector<Index> IntraMixedExchange::addition_candidates() const {
-  return {};
+  // Route may get shorter, leaving room for additions with regard to
+  // vehicle range bounds or time windows.
+  return {s_vehicle};
 }
 
 std::vector<Index> IntraMixedExchange::update_candidates() const {

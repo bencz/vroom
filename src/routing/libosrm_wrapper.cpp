@@ -7,6 +7,7 @@ All rights reserved (see LICENSE).
 
 */
 
+#include <charconv>
 #include <cstdint>
 
 #include "osrm/coordinate.hpp"
@@ -45,12 +46,17 @@ void throw_error(osrm::json::Object& result,
   const std::string snapping_error_base =
     "Could not find a matching segment for coordinate ";
   if (code == "NoSegment" && message.starts_with(snapping_error_base)) {
-    auto error_loc =
-      std::stoul(message.substr(snapping_error_base.size(),
-                                message.size() - snapping_error_base.size()));
-    auto coordinates =
-      std::format("[{},{}]", locs[error_loc].lon(), locs[error_loc].lat());
-    throw RoutingException("Could not find route near location " + coordinates);
+    std::size_t error_loc = 0;
+    const char* const index_start = message.data() + snapping_error_base.size();
+    const char* const index_end = message.data() + message.size();
+    if (const auto [ptr, ec] =
+          std::from_chars(index_start, index_end, error_loc);
+        ec == std::errc() && ptr != index_start && error_loc < locs.size()) {
+      auto coordinates =
+        std::format("[{},{}]", locs[error_loc].lon(), locs[error_loc].lat());
+      throw RoutingException("Could not find route near location " +
+                             coordinates);
+    }
   }
 
   // Other error in response.
@@ -137,17 +143,20 @@ osrm::json::Object LibosrmWrapper::get_route_with_coordinates(
                         osrm::util::FloatLatitude({loc.lat()}));
   }
 
+  // Built before moving coords as argument evaluation order is
+  // unspecified.
+  std::vector<std::optional<double>> radiuses(coords.size(),
+                                              DEFAULT_LIBOSRM_SNAPPING_RADIUS);
+
   // Default options for routing.
-  osrm::RouteParameters
-    params(false, // steps
-           false, // alternatives
-           osrm::RouteParameters::GeometriesType::Polyline,
-           osrm::RouteParameters::OverviewType::Full,
-           false, // continue_straight,
-           std::move(coords),
-           std::vector<std::optional<osrm::engine::Hint>>(),
-           std::vector<std::optional<double>>(coords.size(),
-                                              DEFAULT_LIBOSRM_SNAPPING_RADIUS));
+  osrm::RouteParameters params(false, // steps
+                               false, // alternatives
+                               osrm::RouteParameters::GeometriesType::Polyline,
+                               osrm::RouteParameters::OverviewType::Full,
+                               false, // continue_straight,
+                               std::move(coords),
+                               std::vector<std::optional<osrm::engine::Hint>>(),
+                               std::move(radiuses));
 
   osrm::json::Object result;
   osrm::Status status = _osrm.Route(params, result);

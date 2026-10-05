@@ -48,7 +48,7 @@ void RouteExchange::compute_gain() {
                                                       t_route.size()));
 
   t_gain = s_route.empty()
-             ? _sol_state.route_evals[s_vehicle]
+             ? _sol_state.route_evals[t_vehicle]
              : std::get<0>(utils::addition_eval_delta(_input,
                                                       _sol_state,
                                                       target,

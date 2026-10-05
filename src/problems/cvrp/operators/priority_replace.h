@@ -26,7 +26,7 @@ private:
 protected:
   const Index _u; // Unassigned job to insert.
   const Priority _best_known_priority_gain;
-  std::unordered_set<Index>& _unassigned;
+  std::set<Index>& _unassigned;
 
   bool replace_start_valid{false};
   bool replace_end_valid{false};
@@ -42,7 +42,7 @@ protected:
 public:
   PriorityReplace(const Input& input,
                   const utils::SolutionState& sol_state,
-                  std::unordered_set<Index>& unassigned,
+                  std::set<Index>& unassigned,
                   RawRoute& s_raw_route,
                   Index s_vehicle,
                   Index s_rank, // last rank (included) when replacing

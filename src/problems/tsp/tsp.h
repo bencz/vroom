@@ -27,16 +27,20 @@ private:
   const std::vector<Index> _job_ranks;
   bool _is_symmetric{true};
   const bool _has_start;
-  Index _start;
+  Index _start{0};
   const bool _has_end;
-  Index _end;
+  Index _end{0};
   Matrix<UserCost> _matrix;
   Matrix<UserCost> _symmetrized_matrix;
   bool _round_trip;
 
-  UserCost cost(const std::list<Index>& tour) const;
+  // For open tours with both start and end, make sure end is the
+  // last location in a tour listed from start.
+  void force_end_last(std::list<Index>& tour) const;
 
-  UserCost symmetrized_cost(const std::list<Index>& tour) const;
+  Cost cost(const std::list<Index>& tour) const;
+
+  Cost symmetrized_cost(const std::list<Index>& tour) const;
 
 public:
   TSP(const Input& input, std::vector<Index>&& job_ranks, Index vehicle_rank);

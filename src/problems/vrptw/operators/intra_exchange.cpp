@@ -45,8 +45,4 @@ void IntraExchange::apply() {
                       _last_rank);
 }
 
-std::vector<Index> IntraExchange::addition_candidates() const {
-  return {s_vehicle};
-}
-
 } // namespace vroom::vrptw

@@ -2,11 +2,63 @@
 
 ## Unreleased
 
+### Changed
+
+#### Core solving
+
+- Use remaining time with randomized string removal when a timeout is set and regular perturbations are exhausted
+- Deterministic results regardless of threads scheduling, number of threads and standard library implementation
+- Restrict route pairs explored by some operators based on closest jobs when coordinates are not available
+- Store per-route cost evaluations by vehicle class instead of per vehicle
+- Avoid heap allocations for `Amount` and SWAP* candidate moves
+- Avoid storing and reading zero distance matrices when distances are not required
+- Lighter job insertions bookkeeping in `try_job_additions`
+- Prim algorithm for MST, O(n^3) Hungarian algorithm and faster Hierholzer in TSP heuristic
+- No thread spawning in TSP local search when a single thread is used
+
+#### Routing
+
+- Verify TLS certificates and host name, send SNI
+- Inactivity timeout, response size cap based on number of locations and chunked encoding support for HTTP requests
+- Validate routing responses instead of relying on asserts
+- Bound number of concurrent routing requests for sparse matrices
+- URL-encode Valhalla queries
+
 ### Fixed
+
+#### Core solving
+
+- Crash with matrices not satisfying the triangle inequality
+- Wrong break time window used in `TWRoute::order_choice`, leaving feasible jobs unassigned
+- Corrupted open TSP solution when time limit is reached early
+- `RouteExchange` gain using wrong vehicle eval for empty source route
+- Out-of-bounds read and priority overflow in `PriorityReplace`
+- Signed overflow in removal candidates selection
+- Over-constrained capacity checks for shipments in `CrossExchange` and `MixedExchange`
+- Invalid insertion lower bounds in heuristics for open routes, service cost counted twice
+- Cost upper bound ignoring speed factor, distance and task costs
+- Heuristic vehicle ordering choice ignoring assigned jobs and priorities
+- Regret computed with infeasible routes in `try_job_additions`
+- Missing addition candidates for intra-route moves and `PriorityReplace`
+- Pruning ignoring fixed and task costs in `Relocate` and `OrOpt`
+- Overflow in TSP local search with high costs
+
+#### Plan mode
+
+- Spurious infeasible routes with forced service dates and breaks
+- GLPK memory leaks on error paths, unchecked MIP solver return codes
+- Crash for empty routes and division by zero in break distances
 
 #### Internals
 
 - Add include to fix `std::counting_semaphore` usage (#1333)
+- Build error with recent compilers due to missing `<cstdint>` for cxxopts
+- Reject `location_index`, jobs, vehicles and locations numbers exceeding `Index` range
+- Reject invalid steps, threads number and time limit values
+- Location equality inconsistent with hashing
+- Dangling string references in JSON output
+- Data race on vehicles geometry in plan mode
+- Setup time ignored for first task of vehicles without start in heuristic evals
 
 ## [v1.15.0] - 2026-03-12
 

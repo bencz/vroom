@@ -48,9 +48,9 @@ public:
   bool user_index() const;
 
   // Locations are considered identical if they have the same
-  // user-provided index or if they both have coordinates and those
-  // are equal. The last part is required for situations with no
-  // explicit index provided in input.
+  // user-provided index, or if they both have no user-provided index
+  // and the same coordinates. This is consistent with the hash
+  // function below.
   bool operator==(const Location& other) const;
 };
 

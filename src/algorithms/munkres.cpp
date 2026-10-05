@@ -10,219 +10,129 @@ All rights reserved (see LICENSE).
 #include <algorithm>
 #include <cassert>
 #include <limits>
-#include <set>
+#include <tuple>
+#include <vector>
 
 #include "algorithms/munkres.h"
 
 namespace vroom::utils {
 
 template <class T>
-std::unordered_map<Index, Index>
-minimum_weight_perfect_matching(const Matrix<T>& m) {
+std::map<Index, Index> minimum_weight_perfect_matching(const Matrix<T>& m) {
+  // Hungarian algorithm in O(n^3) using potentials (rows: x, columns:
+  // y). Signed 64 bits values are used to avoid any overflow with
+  // big (e.g. infinite on diagonal) unsigned weights. Indices below
+  // are 1-based, 0 being used as a sentinel column.
+  const std::size_t n = m.size();
+  constexpr Cost INF = std::numeric_limits<Cost>::max() / 4;
 
-  // Trivial initial labeling.
-  std::vector<T> labeling_x(m.size(), 0);
-  std::vector<T> labeling_y(m.size(), 0);
-  for (Index i = 0; i < m.size(); ++i) {
-    T min_weight = std::numeric_limits<T>::max();
-    for (Index j = 0; j < m.size(); ++j) {
-      if (m[i][j] < min_weight) {
-        min_weight = m[i][j];
+  std::vector<Cost> u(n + 1, 0);
+  std::vector<Cost> v(n + 1, 0);
+  // p[j] is the row matched with column j.
+  std::vector<std::size_t> p(n + 1, 0);
+  std::vector<std::size_t> way(n + 1, 0);
+  std::vector<Cost> min_v(n + 1);
+  std::vector<unsigned char> used(n + 1);
+
+  for (std::size_t i = 1; i <= n; ++i) {
+    p[0] = i;
+    std::size_t j0 = 0;
+    std::ranges::fill(min_v, INF);
+    std::ranges::fill(used, false);
+
+    do {
+      used[j0] = true;
+      const std::size_t i0 = p[j0];
+      Cost delta = INF;
+      std::size_t j1 = 0;
+
+      for (std::size_t j = 1; j <= n; ++j) {
+        if (used[j]) {
+          continue;
+        }
+        const Cost current = static_cast<Cost>(m[i0 - 1][j - 1]) - u[i0] - v[j];
+        if (current < min_v[j]) {
+          min_v[j] = current;
+          way[j] = j0;
+        }
+        if (min_v[j] < delta) {
+          delta = min_v[j];
+          j1 = j;
+        }
       }
-    }
-    labeling_x[i] = min_weight;
+
+      for (std::size_t j = 0; j <= n; ++j) {
+        if (used[j]) {
+          u[p[j]] += delta;
+          v[j] -= delta;
+        } else {
+          min_v[j] -= delta;
+        }
+      }
+      j0 = j1;
+    } while (p[j0] != 0);
+
+    // Augmenting path.
+    do {
+      const std::size_t j1 = way[j0];
+      p[j0] = p[j1];
+      j0 = j1;
+    } while (j0 != 0);
   }
 
-  // Initial empty matching.
-  std::unordered_map<Index, Index> matching_xy;
-  std::unordered_map<Index, Index> matching_yx;
-
-  // Alternating tree.
-  std::unordered_map<Index, Index> alternating_tree;
-
-  while (matching_xy.size() < m.size()) {
-    // Step 1.
-
-    alternating_tree.clear();
-    std::vector<Index> S_list;
-    std::unordered_set<Index> S;
-    std::unordered_set<Index> T_set;
-
-    // Finding any unmatched x.
-    Index unmatched_x = 0;
-    while (matching_xy.contains(unmatched_x)) {
-      ++unmatched_x;
-    }
-    S.insert(unmatched_x);
-    S_list.push_back(unmatched_x);
-
-    // Saving relevant neighbors in equality graph in alternating_tree
-    // and initializing slacks.
-    std::vector<T> slack;
-    slack.resize(m.size());
-    for (Index y = 0; y < m.size(); ++y) {
-      if (labeling_x[unmatched_x] + labeling_y[y] == m[unmatched_x][y]) {
-        alternating_tree.emplace(y, unmatched_x);
-      }
-      slack[y] = m[unmatched_x][y] - labeling_x[unmatched_x] - labeling_y[y];
-    }
-
-    bool augmented_path = false;
-
-    while (!augmented_path) {
-      // Test if neighbors of S in equality graph equals T_set or not
-      // (note that T_set is included in S neighbors).
-      if (alternating_tree.size() == T_set.size()) {
-        // Step 2.
-
-        T alpha = std::numeric_limits<T>::max();
-        for (Index y = 0; y < m.size(); ++y) {
-          // Computing alpha, the minimum of slack values over
-          // complement of T_set.
-          if (!T_set.contains(y)) {
-            T current_slack = slack[y];
-            if (current_slack < alpha) {
-              alpha = current_slack;
-            }
-          }
-        }
-
-        // Update labelings
-        for (auto const& x : S_list) {
-          labeling_x[x] = labeling_x[x] + alpha;
-        }
-        for (auto const& y : T_set) {
-          labeling_y[y] = labeling_y[y] - alpha;
-        }
-
-        // Updating relevant neighbors in new equality graph and
-        // updating slacks.
-        for (Index y = 0; y < m.size(); ++y) {
-          if (!T_set.contains(y)) {
-            slack[y] = slack[y] - alpha;
-
-            if (!alternating_tree.contains(y)) {
-              for (auto const& x : S_list) {
-                if (labeling_x[x] + labeling_y[y] == m[x][y]) {
-                  alternating_tree.emplace(y, x);
-                  break;
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // Step 3.
-
-      // First y in equality neighbors not in T_set.
-      const auto it =
-        std::ranges::find_if(alternating_tree, [&](const auto& edge) {
-          return !T_set.contains(edge.first);
-        });
-      assert(it != alternating_tree.end());
-      auto chosen_y = it->first;
-
-      auto matching_y = matching_yx.find(chosen_y);
-      if (matching_y != matching_yx.end()) {
-        // Chosen y is actually matched in M, update S and T_set and
-        // proceed to step 2.
-        const Index matched_x = matching_y->second;
-
-        if (const auto [iter, insert_ok] = S.insert(matched_x); insert_ok) {
-          S_list.push_back(matched_x);
-        }
-        T_set.insert(chosen_y);
-
-        // Updating slacks.
-        for (Index y = 0; y < m.size(); ++y) {
-          T current_value = slack[y];
-          T new_value = m[matched_x][y] - labeling_x[matched_x] - labeling_y[y];
-          if (new_value < current_value) {
-            slack[y] = new_value;
-          }
-        }
-      } else {
-        // Find larger matching using M-alternating path. The path is
-        // described at each step by:
-        //
-        // chosen_y -- chosen_x -- next_y -- [...] -- unmatched_x
-        //
-        // where (chosen_x, next_y) is already in matching and should
-        // be removed and (chosen_x, chosen_y) is to be added.
-
-        Index current_y = chosen_y;
-        Index current_x = alternating_tree.at(current_y);
-
-        while (current_x != unmatched_x) {
-          const Index next_y = matching_xy.at(current_x);
-
-          // Remove alternating edge from current matching.
-          matching_xy.erase(matching_xy.find(current_x));
-          matching_yx.erase(matching_yx.find(next_y));
-
-          // Add edge from alternating tree to matching.
-          matching_xy.emplace(current_x, current_y);
-          matching_yx.emplace(current_y, current_x);
-
-          current_y = next_y;
-          current_x = alternating_tree.at(current_y);
-        }
-        // Adding last edge from alternating tree.
-        matching_xy.emplace(current_x, current_y);
-        matching_yx.emplace(current_y, current_x);
-
-        // Back to step 1.
-        augmented_path = true;
-      }
-    }
+  std::map<Index, Index> matching_xy;
+  for (std::size_t j = 1; j <= n; ++j) {
+    matching_xy.emplace(static_cast<Index>(p[j] - 1),
+                        static_cast<Index>(j - 1));
   }
   return matching_xy;
 }
 
 template <class T>
-std::unordered_map<Index, Index>
-greedy_symmetric_approx_mwpm(const Matrix<T>& m) {
+std::map<Index, Index> greedy_symmetric_approx_mwpm(const Matrix<T>& m) {
   // Fast greedy algorithm for finding a symmetric perfect matching,
   // choosing always smaller possible value, no minimality
   // assured. Matrix size should be even!
   assert(m.size() % 2 == 0);
 
-  std::unordered_map<Index, Index> matching;
-  std::set<Index> remaining_indices;
+  // Sorting all candidate pairs once by (weight, i, j), then picking
+  // pairs with both vertices still available yields the same
+  // matching as repeatedly searching for the smallest weight among
+  // remaining vertices.
+  struct Candidate {
+    T weight;
+    Index i;
+    Index j;
+  };
+  std::vector<Candidate> candidates;
+  candidates.reserve(m.size() * (m.size() - 1) / 2);
   for (Index i = 0; i < m.size(); ++i) {
-    remaining_indices.insert(i);
-  }
-
-  while (!remaining_indices.empty()) {
-    T min_weight = std::numeric_limits<T>::max();
-    std::set<Index>::iterator chosen_i;
-    std::set<Index>::iterator chosen_j;
-    for (auto i = remaining_indices.begin(); i != remaining_indices.end();
-         ++i) {
-      auto j = i;
-      ++j;
-      for (; j != remaining_indices.end(); ++j) {
-        T current_weight = m[*i][*j];
-        if (current_weight < min_weight) {
-          min_weight = current_weight;
-          chosen_i = i;
-          chosen_j = j;
-        }
-      }
+    for (Index j = i + 1; j < m.size(); ++j) {
+      candidates.push_back({m[i][j], i, j});
     }
-    matching.emplace(*chosen_i, *chosen_j);
-    remaining_indices.erase(chosen_j);
-    remaining_indices.erase(chosen_i);
+  }
+  std::ranges::sort(candidates, [](const auto& lhs, const auto& rhs) {
+    return std::tie(lhs.weight, lhs.i, lhs.j) <
+           std::tie(rhs.weight, rhs.i, rhs.j);
+  });
+
+  std::map<Index, Index> matching;
+  std::vector<unsigned char> matched(m.size(), false);
+  for (const auto& c : candidates) {
+    if (!matched[c.i] && !matched[c.j]) {
+      matching.emplace(c.i, c.j);
+      matched[c.i] = true;
+      matched[c.j] = true;
+    }
   }
 
   return matching;
 }
 
-template std::unordered_map<Index, Index>
+template std::map<Index, Index>
 minimum_weight_perfect_matching(const Matrix<UserCost>& m);
 
-template std::unordered_map<Index, Index>
+template std::map<Index, Index>
 greedy_symmetric_approx_mwpm(const Matrix<UserCost>& m);
 
 } // namespace vroom::utils

@@ -10,7 +10,7 @@ All rights reserved (see LICENSE).
 #include <fstream>
 #include <iostream>
 
-#include "../include/rapidjson/include/rapidjson/stringbuffer.h"
+#include "../include/rapidjson/include/rapidjson/ostreamwrapper.h"
 #include "../include/rapidjson/include/rapidjson/writer.h"
 
 #include "structures/typedefs.h"
@@ -141,7 +141,9 @@ rapidjson::Document to_json(const vroom::Exception& e) {
 
   json_output.AddMember("code", e.error_code, allocator);
   json_output.AddMember("error", rapidjson::Value(), allocator);
-  json_output["error"].SetString(e.message.c_str(), e.message.size());
+  json_output["error"].SetString(e.message.c_str(),
+                                 e.message.size(),
+                                 allocator);
 
   return json_output;
 }
@@ -261,7 +263,8 @@ rapidjson::Value to_json(const Route& route,
   if (!route.geometry.empty()) {
     json_route.AddMember("geometry", rapidjson::Value(), allocator);
     json_route["geometry"].SetString(route.geometry.c_str(),
-                                     route.geometry.size());
+                                     route.geometry.size(),
+                                     allocator);
   }
 
   return json_route;
@@ -380,20 +383,26 @@ rapidjson::Value to_json(const Location& loc,
 
 void write_to_output(const rapidjson::Document& json_output,
                      const std::string& output_file) {
-  // Rapidjson writing process.
-  rapidjson::StringBuffer s;
-  rapidjson::Writer<rapidjson::StringBuffer> r_writer(s);
-  json_output.Accept(r_writer);
-
-  // Write to relevant output.
+  // Stream rapidjson output directly to relevant output, avoiding an
+  // intermediate copy of the whole string.
   if (output_file.empty()) {
     // Log to standard output.
-    std::cout << s.GetString() << std::endl;
+    rapidjson::OStreamWrapper osw(std::cout);
+    rapidjson::Writer<rapidjson::OStreamWrapper> r_writer(osw);
+    json_output.Accept(r_writer);
+    std::cout << std::endl;
   } else {
     // Log to file.
     std::ofstream out_stream(output_file, std::ofstream::out);
-    out_stream << s.GetString();
+    rapidjson::OStreamWrapper osw(out_stream);
+    rapidjson::Writer<rapidjson::OStreamWrapper> r_writer(osw);
+    json_output.Accept(r_writer);
     out_stream.close();
+
+    if (!out_stream) {
+      std::cerr << "[Error] Failed writing to file: " << output_file
+                << std::endl;
+    }
   }
 }
 
