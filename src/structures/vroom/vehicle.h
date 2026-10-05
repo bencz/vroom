@@ -68,6 +68,9 @@ struct Vehicle {
   std::vector<VehicleStep> steps;
   Index type;
   const std::string type_str;
+  // If true, tasks in route have to be visited by non-increasing
+  // priority.
+  const bool priority_order;
   std::unordered_map<Id, Index> break_id_to_rank;
 
   Vehicle(
@@ -88,7 +91,8 @@ struct Vehicle {
     const std::optional<UserDistance>& max_distance =
       std::optional<UserDistance>(),
     const std::vector<VehicleStep>& input_steps = std::vector<VehicleStep>(),
-    std::string type_str = NO_TYPE);
+    std::string type_str = NO_TYPE,
+    bool priority_order = false);
 
   bool has_start() const;
 

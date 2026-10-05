@@ -47,6 +47,17 @@ inline std::string get_string(const rapidjson::Value& object, const char* key) {
   return value;
 }
 
+inline bool get_bool(const rapidjson::Value& object, const char* key) {
+  bool value = false;
+  if (object.HasMember(key)) {
+    if (!object[key].IsBool()) {
+      throw InputException("Invalid " + std::string(key) + " value.");
+    }
+    value = object[key].GetBool();
+  }
+  return value;
+}
+
 inline double get_double(const rapidjson::Value& object, const char* key) {
   double value = 1.;
   if (object.HasMember(key)) {
@@ -487,7 +498,8 @@ inline Vehicle get_vehicle(const rapidjson::Value& json_vehicle,
                  get_value_for<UserDuration>(json_vehicle, "max_travel_time"),
                  get_value_for<UserDistance>(json_vehicle, "max_distance"),
                  get_vehicle_steps(json_vehicle),
-                 get_string(json_vehicle, "type"));
+                 get_string(json_vehicle, "type"),
+                 get_bool(json_vehicle, "priority_order"));
 }
 
 inline Location get_task_location(const rapidjson::Value& v,

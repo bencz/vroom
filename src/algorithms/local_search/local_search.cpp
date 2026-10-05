@@ -504,7 +504,8 @@ void LocalSearch<Route,
               continue;
             }
 
-            const Priority priority_gain = u_priority - current_job.priority;
+            const Priority priority_gain =
+              utils::priority_gain(u_priority, current_job.priority);
 
             if (best_priorities[source] <= priority_gain) {
               if (!(u_delivery <= delivery_margin + current_job.delivery) ||
@@ -584,7 +585,8 @@ void LocalSearch<Route,
 
         for (const auto& [source, target] : s_t_pairs) {
           if (source != target || !_input.vehicle_ok_with_job(source, u) ||
-              _sol[source].empty() ||
+              // Replacing a single job is an UnassignedExchange move.
+              _sol[source].size() < 2 ||
               // We only search for net priority gains here.
               (u_priority <= _sol_state.fwd_priority[source].front() &&
                u_priority <= _sol_state.bwd_priority[source].back())) {
@@ -636,10 +638,10 @@ void LocalSearch<Route,
             // No route end portion yields a net priority gain, so use
             // the last rank, which discards replacing the end of the
             // route. Note: route has at least two jobs here due to the
-            // above priority checks.
-            assert(_sol[source].size() > 1);
+            // above size check.
             bwd_first_rank = _sol[source].size() - 1;
           }
+          assert(0 < bwd_first_rank && bwd_first_rank < _sol[source].size());
           while (
             bwd_first_rank < _sol[source].size() - 1 &&
             _sol[source].has_pending_delivery_after_rank(bwd_first_rank - 1)) {
@@ -2053,6 +2055,12 @@ void LocalSearch<Route,
     // A round of local search.
     run_ls_step();
 
+    // Local search moves only exchange a limited number of jobs, so
+    // look for broader priority improvements.
+    while (try_priority_improvements()) {
+      run_ls_step();
+    }
+
     // Comparison with indicators for current solution.
     if (const utils::SolutionIndicators current_sol_indicators(_input, _sol);
         current_sol_indicators < _best_sol_indicators) {
@@ -2434,6 +2442,296 @@ bool LocalSearch<Route,
   }
 
   return _close_routes.empty() || _close_routes[source][target];
+}
+
+template <class Route,
+          class UnassignedExchange,
+          class CrossExchange,
+          class MixedExchange,
+          class TwoOpt,
+          class ReverseTwoOpt,
+          class Relocate,
+          class OrOpt,
+          class IntraExchange,
+          class IntraCrossExchange,
+          class IntraMixedExchange,
+          class IntraRelocate,
+          class IntraOrOpt,
+          class IntraTwoOpt,
+          class PDShift,
+          class RouteExchange,
+          class SwapStar,
+          class RouteSplit,
+          class PriorityReplace,
+          class TSPFix>
+bool LocalSearch<Route,
+                 UnassignedExchange,
+                 CrossExchange,
+                 MixedExchange,
+                 TwoOpt,
+                 ReverseTwoOpt,
+                 Relocate,
+                 OrOpt,
+                 IntraExchange,
+                 IntraCrossExchange,
+                 IntraMixedExchange,
+                 IntraRelocate,
+                 IntraOrOpt,
+                 IntraTwoOpt,
+                 PDShift,
+                 RouteExchange,
+                 SwapStar,
+                 RouteSplit,
+                 PriorityReplace,
+                 TSPFix>::try_priority_improvements() {
+  constexpr std::size_t max_removals = 4;
+  constexpr std::size_t max_tries_per_job = 3;
+
+  // Lowest priority among assigned single jobs, no improvement is
+  // possible for unassigned jobs with a lower priority.
+  Priority min_assigned_priority = std::numeric_limits<Priority>::max();
+  for (const auto& route : _sol) {
+    for (const auto j : route.route) {
+      if (_input.jobs[j].type == JOB_TYPE::SINGLE) {
+        min_assigned_priority =
+          std::min(min_assigned_priority, _input.jobs[j].priority);
+      }
+    }
+  }
+
+  std::vector<Index> candidates;
+  std::ranges::copy_if(_sol_state.unassigned,
+                       std::back_inserter(candidates),
+                       [&](const Index j) {
+                         return _input.jobs[j].type == JOB_TYPE::SINGLE &&
+                                0 < _input.jobs[j].priority &&
+                                min_assigned_priority <=
+                                  _input.jobs[j].priority;
+                       });
+  // Try higher priority jobs first, stable to remain deterministic.
+  std::ranges::stable_sort(candidates, [&](const Index lhs, const Index rhs) {
+    return _input.jobs[rhs].priority < _input.jobs[lhs].priority;
+  });
+
+  bool modified = false;
+
+  for (const auto u : candidates) {
+    if (!_sol_state.unassigned.contains(u)) {
+      continue;
+    }
+    const auto& u_job = _input.jobs[u];
+
+    // Options for inserting u in a route after removing some jobs
+    // with no higher priority.
+    struct Option {
+      // Highest priority among removed jobs, the move is improving
+      // by itself if it is lower than u priority. Otherwise removed
+      // jobs with the same priority have to be re-inserted elsewhere.
+      Priority max_removed_priority;
+      Cost cost_delta;
+      Route route;
+      std::vector<Index> removed;
+    };
+    std::vector<Option> options;
+
+    for (Index v = 0; v < _nb_vehicles; ++v) {
+      if (_sol[v].empty() || !_input.vehicle_ok_with_job(v, u)) {
+        continue;
+      }
+      const auto& vehicle = _input.vehicles[v];
+
+      // Removal candidates by increasing priority, then decreasing
+      // amount to free room as fast as possible.
+      std::vector<Index> removal_candidates;
+      for (const auto j : _sol[v].route) {
+        if (_input.jobs[j].type == JOB_TYPE::SINGLE &&
+            _input.jobs[j].priority <= u_job.priority) {
+          removal_candidates.push_back(j);
+        }
+      }
+      std::ranges::stable_sort(removal_candidates,
+                               [&](const Index lhs, const Index rhs) {
+                                 const auto& l = _input.jobs[lhs];
+                                 const auto& r = _input.jobs[rhs];
+                                 if (l.priority != r.priority) {
+                                   return l.priority < r.priority;
+                                 }
+                                 return r.delivery + r.pickup <
+                                        l.delivery + l.pickup;
+                               });
+
+      Route route = _sol[v];
+      Priority max_removed_priority = 0;
+      std::vector<Index> removed;
+
+      for (const auto j : removal_candidates) {
+        if (removed.size() == max_removals) {
+          break;
+        }
+
+        const auto rank =
+          static_cast<Index>(std::distance(route.route.begin(),
+                                           std::ranges::find(route.route, j)));
+        if (!route.is_valid_removal(_input, rank, 1)) {
+          continue;
+        }
+        route.remove(_input, rank, 1);
+        removed.push_back(j);
+        max_removed_priority =
+          std::max(max_removed_priority, _input.jobs[j].priority);
+
+        if (route.size() + 1 > vehicle.max_tasks) {
+          continue;
+        }
+
+        // Look for best valid insertion of u in reduced route.
+        std::optional<Index> best_rank;
+        Cost best_addition = std::numeric_limits<Cost>::max();
+        for (Index r = 0; r <= route.size(); ++r) {
+          const auto addition =
+            utils::addition_eval(_input, u, vehicle, route.route, r).cost;
+          if (addition < best_addition &&
+              route.is_valid_addition_for_capacity(_input,
+                                                   u_job.pickup,
+                                                   u_job.delivery,
+                                                   r) &&
+              route.is_valid_addition_for_tw(_input, u, r)) {
+            if (vehicle.has_range_bounds()) {
+              std::vector<Index> new_route;
+              new_route.reserve(route.size() + 1);
+              std::copy_n(route.route.begin(),
+                          r,
+                          std::back_inserter(new_route));
+              new_route.push_back(u);
+              std::copy(route.route.begin() + r,
+                        route.route.end(),
+                        std::back_inserter(new_route));
+              if (!vehicle.ok_for_range_bounds(
+                    utils::route_eval_for_vehicle(_input, v, new_route))) {
+                continue;
+              }
+            }
+            best_addition = addition;
+            best_rank = r;
+          }
+        }
+
+        if (best_rank.has_value()) {
+          auto new_route = route;
+          new_route.add(_input, u, best_rank.value());
+          const Cost cost_delta =
+            utils::route_eval_for_vehicle(_input, v, new_route.route).cost -
+            _sol_state.route_evals[v].cost;
+          options.push_back(
+            {max_removed_priority, cost_delta, std::move(new_route), removed});
+          // No need to remove more jobs.
+          break;
+        }
+      }
+    }
+
+    std::ranges::stable_sort(options, [](const auto& lhs, const auto& rhs) {
+      return std::tie(lhs.max_removed_priority, lhs.cost_delta) <
+             std::tie(rhs.max_removed_priority, rhs.cost_delta);
+    });
+    if (options.size() > max_tries_per_job) {
+      options.erase(options.begin() + max_tries_per_job, options.end());
+    }
+
+    // Try options in turn, only keeping the first one yielding a
+    // priority gain once removed jobs have possibly been re-inserted.
+    for (auto& option : options) {
+      const utils::SolutionIndicators previous_indicators(_input, _sol);
+      const auto previous_unassigned = _sol_state.unassigned;
+      const auto v = option.route.v_rank;
+
+      std::vector<Route> previous_routes;
+      const bool keep_previous = u_job.priority <= option.max_removed_priority;
+      if (keep_previous) {
+        previous_routes = _sol;
+      }
+
+      _sol[v] = std::move(option.route);
+      _sol_state.unassigned.erase(u);
+      for (const auto j : option.removed) {
+        _sol_state.unassigned.insert(j);
+      }
+      update_route_state(v);
+
+      // Removed jobs may fit somewhere else.
+      auto modified_vehicles = try_job_additions(_all_routes, 0);
+      modified_vehicles.insert(v);
+
+      if (utils::SolutionIndicators::
+            compare_priorities(utils::SolutionIndicators(_input, _sol),
+                               previous_indicators) < 0) {
+        modified = true;
+        break;
+      }
+
+      // No priority gain, revert.
+      assert(keep_previous);
+      for (const auto w : modified_vehicles) {
+        _sol[w] = previous_routes[w];
+        update_route_state(w);
+      }
+      _sol_state.unassigned = previous_unassigned;
+    }
+  }
+
+  return modified;
+}
+
+template <class Route,
+          class UnassignedExchange,
+          class CrossExchange,
+          class MixedExchange,
+          class TwoOpt,
+          class ReverseTwoOpt,
+          class Relocate,
+          class OrOpt,
+          class IntraExchange,
+          class IntraCrossExchange,
+          class IntraMixedExchange,
+          class IntraRelocate,
+          class IntraOrOpt,
+          class IntraTwoOpt,
+          class PDShift,
+          class RouteExchange,
+          class SwapStar,
+          class RouteSplit,
+          class PriorityReplace,
+          class TSPFix>
+void LocalSearch<Route,
+                 UnassignedExchange,
+                 CrossExchange,
+                 MixedExchange,
+                 TwoOpt,
+                 ReverseTwoOpt,
+                 Relocate,
+                 OrOpt,
+                 IntraExchange,
+                 IntraCrossExchange,
+                 IntraMixedExchange,
+                 IntraRelocate,
+                 IntraOrOpt,
+                 IntraTwoOpt,
+                 PDShift,
+                 RouteExchange,
+                 SwapStar,
+                 RouteSplit,
+                 PriorityReplace,
+                 TSPFix>::update_route_state(Index v) {
+  _sol_state.update_route_eval(_sol[v]);
+  _sol_state.update_route_bbox(_sol[v]);
+  _sol_state.update_costs(_sol[v]);
+  _sol_state.update_skills(_sol[v]);
+  _sol_state.update_priorities(_sol[v]);
+  _sol_state.set_insertion_ranks(_sol[v]);
+  _sol_state.set_node_gains(_sol[v]);
+  _sol_state.set_edge_gains(_sol[v]);
+  _sol_state.set_pd_matching_ranks(_sol[v]);
+  _sol_state.set_pd_gains(_sol[v]);
 }
 
 template <class Route,

@@ -2,10 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+#### Features
+
+- `priority_order` vehicle key to visit tasks by non-increasing priority
+
 ### Changed
 
 #### Core solving
 
+- Hierarchical priorities: a task is never left unassigned in favor of any number of lower-priority tasks
+- Priority-aware route seeding and job insertion in heuristics
+- Broader priority improvements in local search, removing several lower-priority jobs from a route
 - Use remaining time with randomized string removal when a timeout is set and regular perturbations are exhausted
 - Deterministic results regardless of threads scheduling, number of threads and standard library implementation
 - Restrict route pairs explored by some operators based on closest jobs when coordinates are not available
@@ -32,7 +41,7 @@
 - Wrong break time window used in `TWRoute::order_choice`, leaving feasible jobs unassigned
 - Corrupted open TSP solution when time limit is reached early
 - `RouteExchange` gain using wrong vehicle eval for empty source route
-- Out-of-bounds read and priority overflow in `PriorityReplace`
+- Out-of-bounds reads and priority overflow in `PriorityReplace`
 - Signed overflow in removal candidates selection
 - Over-constrained capacity checks for shipments in `CrossExchange` and `MixedExchange`
 - Invalid insertion lower bounds in heuristics for open routes, service cost counted twice

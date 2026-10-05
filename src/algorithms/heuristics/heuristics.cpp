@@ -36,13 +36,20 @@ inline void seed_route(const Input& input,
   Cost nearest_cost = std::numeric_limits<Cost>::max();
   Duration earliest_deadline = std::numeric_limits<Duration>::max();
   Index best_job_rank = 0;
+  // Seed with a job having the highest possible priority, init
+  // criterion only decides between jobs with the same priority.
+  Priority best_priority = 0;
   for (const auto job_rank : unassigned) {
     const auto& current_job = input.jobs[job_rank];
 
     if (!input.vehicle_ok_with_job(v_rank, job_rank) ||
-        current_job.type == JOB_TYPE::DELIVERY || job_not_ok(job_rank)) {
+        current_job.type == JOB_TYPE::DELIVERY || job_not_ok(job_rank) ||
+        current_job.priority < best_priority) {
       continue;
     }
+
+    const bool higher_priority =
+      init_ok && best_priority < current_job.priority;
 
     const bool is_pickup = (current_job.type == JOB_TYPE::PICKUP);
 
@@ -69,7 +76,7 @@ inline void seed_route(const Input& input,
       try_validity = (evals[job_rank][v_rank].cost < nearest_cost);
     }
 
-    if (!try_validity) {
+    if (!try_validity && !higher_priority) {
       continue;
     }
 
@@ -92,8 +99,17 @@ inline void seed_route(const Input& input,
     }
 
     if (is_valid) {
+      if (higher_priority) {
+        // Reset init criterion values for this new priority level.
+        higher_amount = input.zero_amount();
+        furthest_cost = 0;
+        nearest_cost = std::numeric_limits<Cost>::max();
+        earliest_deadline = std::numeric_limits<Duration>::max();
+      }
+
       init_ok = true;
       best_job_rank = job_rank;
+      best_priority = current_job.priority;
 
       switch (init) {
         using enum INIT;
@@ -265,6 +281,9 @@ inline Eval fill_route(const Input& input,
   while (keep_going) {
     keep_going = false;
     double best_cost = std::numeric_limits<double>::max();
+    // Jobs with higher priority are always inserted first, insertion
+    // cost only decides between jobs with the same priority.
+    Priority best_priority = 0;
     Index best_job_rank = 0;
     Index best_r = 0;
     Index best_pickup_r = 0;
@@ -279,15 +298,23 @@ inline Eval fill_route(const Input& input,
 
       const auto& current_job = input.jobs[job_rank];
 
-      if (current_job.type == JOB_TYPE::DELIVERY) {
+      if (current_job.type == JOB_TYPE::DELIVERY ||
+          current_job.priority < best_priority) {
         continue;
       }
+
+      // Any valid insertion for a job with higher priority than
+      // current best is better.
+      double cost_to_beat = (best_priority < current_job.priority)
+                              ? std::numeric_limits<double>::max()
+                              : best_cost;
 
       if (current_job.type == JOB_TYPE::SINGLE &&
           route.size() + 1 <= vehicle.max_tasks) {
 
-        if (best_cost < unassigned_costs.get_insertion_lower_bound(job_rank) -
-                          lambda * static_cast<double>(regrets[job_rank])) {
+        if (cost_to_beat <
+            unassigned_costs.get_insertion_lower_bound(job_rank) -
+              lambda * static_cast<double>(regrets[job_rank])) {
           // Bypass going through whole route if we're sure insertion
           // cost is not good enough.
           continue;
@@ -301,7 +328,7 @@ inline Eval fill_route(const Input& input,
             static_cast<double>(current_eval.cost) -
             lambda * static_cast<double>(regrets[job_rank]);
 
-          if (current_cost < best_cost &&
+          if (current_cost < cost_to_beat &&
               (vehicle.ok_for_range_bounds(route_eval + current_eval)) &&
               route.is_valid_addition_for_capacity(input,
                                                    current_job.pickup,
@@ -309,6 +336,8 @@ inline Eval fill_route(const Input& input,
                                                    r) &&
               route.is_valid_addition_for_tw(input, job_rank, r)) {
             best_cost = current_cost;
+            cost_to_beat = current_cost;
+            best_priority = current_job.priority;
             best_job_rank = job_rank;
             best_r = r;
             best_eval = current_eval;
@@ -319,7 +348,7 @@ inline Eval fill_route(const Input& input,
       if (current_job.type == JOB_TYPE::PICKUP &&
           route.size() + 2 <= vehicle.max_tasks) {
 
-        if (best_cost <
+        if (cost_to_beat <
             unassigned_costs.get_pd_insertion_lower_bound(input, job_rank) -
               lambda * static_cast<double>(regrets[job_rank])) {
           // Bypass going through whole route if we're sure insertion
@@ -400,7 +429,7 @@ inline Eval fill_route(const Input& input,
               current_eval.cost -
               lambda * static_cast<double>(regrets[job_rank]);
 
-            if (current_cost < best_cost) {
+            if (current_cost < cost_to_beat) {
               modified_with_pd.push_back(job_rank + 1);
 
               // Update best cost depending on validity.
@@ -426,6 +455,8 @@ inline Eval fill_route(const Input& input,
 
               if (valid) {
                 best_cost = current_cost;
+                cost_to_beat = current_cost;
+                best_priority = current_job.priority;
                 best_job_rank = job_rank;
                 best_pickup_r = pickup_r;
                 best_delivery_r = delivery_r;
@@ -837,8 +868,16 @@ void set_route(const Input& input,
       std::format("Invalid shipment in route for vehicle {}.", vehicle.id));
   }
 
+  if (vehicle.priority_order &&
+      !std::ranges::is_sorted(job_ranks, [&](const Index lhs, const Index rhs) {
+        return input.jobs[rhs].priority < input.jobs[lhs].priority;
+      })) {
+    throw InputException(
+      std::format("Steps not ordered by priority for vehicle {}.", vehicle.id));
+  }
+
   // Now route is OK with regard to capacity, max_travel_time,
-  // max_tasks, precedence and skills constraints.
+  // max_tasks, precedence, skills and priority order constraints.
   if (!job_ranks.empty()) {
     if (!route.is_valid_addition_for_tw(input,
                                         single_jobs_deliveries,

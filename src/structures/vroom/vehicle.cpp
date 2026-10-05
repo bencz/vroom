@@ -30,7 +30,8 @@ Vehicle::Vehicle(Id id,
                  const std::optional<UserDuration>& max_travel_time,
                  const std::optional<UserDistance>& max_distance,
                  const std::vector<VehicleStep>& input_steps,
-                 std::string type_str)
+                 std::string type_str,
+                 bool priority_order)
   : id(id),
     start(start),
     end(end),
@@ -52,7 +53,8 @@ Vehicle::Vehicle(Id id,
                                            [](const auto& b) {
                                              return b.max_load.has_value();
                                            })),
-    type_str(std::move(type_str)) {
+    type_str(std::move(type_str)),
+    priority_order(priority_order) {
   if (!static_cast<bool>(start) && !static_cast<bool>(end)) {
     throw InputException(
       std::format("No start or end specified for vehicle {}.", id));

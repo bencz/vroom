@@ -278,7 +278,9 @@ void Input::add_vehicle(const Vehicle& vehicle) {
   check_amount_size(current_v.capacity);
 
   // Check for time-windows and skills.
-  _has_TW = _has_TW || !vehicle.tw.is_default() || !vehicle.breaks.empty();
+  // Priority order is enforced as part of timing constraints checks.
+  _has_TW = _has_TW || !vehicle.tw.is_default() || !vehicle.breaks.empty() ||
+            vehicle.priority_order;
   _has_skills = _has_skills || !current_v.skills.empty();
 
   bool has_location_index = false;

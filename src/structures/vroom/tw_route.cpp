@@ -702,6 +702,26 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
 
   const auto& v = input.vehicles[v_rank];
 
+  if (v.priority_order) {
+    // Tasks have to be visited by non-increasing priority. Current
+    // route is already ordered, so only check inserted tasks and
+    // their neighbours.
+    Priority max_allowed = (first_rank == 0)
+                             ? MAX_PRIORITY
+                             : input.jobs[route[first_rank - 1]].priority;
+    for (auto job_iter = first_job; job_iter != last_job; ++job_iter) {
+      const auto p = input.jobs[*job_iter].priority;
+      if (max_allowed < p) {
+        return false;
+      }
+      max_allowed = p;
+    }
+    if (last_rank < route.size() &&
+        max_allowed < input.jobs[route[last_rank]].priority) {
+      return false;
+    }
+  }
+
   // Override this value if vehicle does not need this check anyway to
   // spare some work.
   check_max_load = v.has_break_max_load && check_max_load;

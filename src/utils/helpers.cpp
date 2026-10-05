@@ -28,16 +28,6 @@ Amount max_amount(std::size_t size) {
   return max;
 }
 
-Priority priority_sum_for_route(const Input& input,
-                                const std::vector<Index>& route) {
-  return std::accumulate(route.begin(),
-                         route.end(),
-                         0,
-                         [&](auto sum, auto job_rank) {
-                           return sum + input.jobs[job_rank].priority;
-                         });
-}
-
 Eval route_eval_for_vehicle(const Input& input,
                             Index v_rank,
                             const std::vector<Index>& route) {

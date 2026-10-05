@@ -223,21 +223,23 @@ void SolutionState::update_priorities(const RawRoute& raw_route) {
   const auto v = raw_route.v_rank;
   const auto& route = raw_route.route;
 
+  const auto max_priority = [this](const auto p, const auto j) {
+    return std::max(p, _input.jobs[j].priority);
+  };
+
   fwd_priority[v].resize(route.size());
-  std::inclusive_scan(
-    route.cbegin(),
-    route.cend(),
-    fwd_priority[v].begin(),
-    [this](const auto p, const auto j) { return p + _input.jobs[j].priority; },
-    0);
+  std::inclusive_scan(route.cbegin(),
+                      route.cend(),
+                      fwd_priority[v].begin(),
+                      max_priority,
+                      Priority{0});
 
   bwd_priority[v].resize(route.size());
-  std::inclusive_scan(
-    route.crbegin(),
-    route.crend(),
-    bwd_priority[v].rbegin(),
-    [this](const auto p, const auto j) { return p + _input.jobs[j].priority; },
-    0);
+  std::inclusive_scan(route.crbegin(),
+                      route.crend(),
+                      bwd_priority[v].rbegin(),
+                      max_priority,
+                      Priority{0});
 }
 
 void SolutionState::set_node_gains(const RawRoute& raw_route) {

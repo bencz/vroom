@@ -78,10 +78,10 @@ public:
   std::vector<std::vector<Index>> fwd_skill_rank;
   std::vector<std::vector<Index>> bwd_skill_rank;
 
-  // fwd_priority[v][i] stores the sum of priorities from job at rank
-  // 0 to job at rank i (included) in the route for vehicle v.
-  // bwd_priority[v][i] stores the sum of priorities from job at rank
-  // i to last job in the route for vehicle v.
+  // fwd_priority[v][i] stores the highest priority for jobs from
+  // rank 0 to rank i (included) in the route for vehicle v.
+  // bwd_priority[v][i] stores the highest priority for jobs from rank
+  // i (included) to the end of the route for vehicle v.
   std::vector<std::vector<Priority>> fwd_priority;
   std::vector<std::vector<Priority>> bwd_priority;
 

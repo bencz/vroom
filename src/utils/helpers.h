@@ -710,17 +710,22 @@ inline Eval in_place_delta_eval(const Input& input,
          v.task_eval(added_task_duration);
 }
 
-// Net priority gain when replacing tasks with a priority sum of
-// replaced_priority by a task with priority new_priority, zero if
-// there is no net gain.
+// Priorities are hierarchical: any number of assigned tasks with a
+// given priority is worth less than one more assigned task with a
+// higher priority. Replacing tasks whose highest priority is
+// replaced_priority by a task with priority new_priority is an
+// improvement if new_priority is higher, in which case the returned
+// gain is positive. Gains for several moves compare first based on
+// the new task priority, then favor replacing lower priorities.
 inline Priority priority_gain(Priority new_priority,
                               Priority replaced_priority) {
-  return (replaced_priority < new_priority) ? new_priority - replaced_priority
-                                            : 0;
+  assert(new_priority <= MAX_PRIORITY && replaced_priority <= MAX_PRIORITY);
+  if (new_priority <= replaced_priority) {
+    return 0;
+  }
+  constexpr Priority shift = MAX_PRIORITY + 1;
+  return new_priority * shift + (MAX_PRIORITY - replaced_priority);
 }
-
-Priority priority_sum_for_route(const Input& input,
-                                const std::vector<Index>& route);
 
 Eval route_eval_for_vehicle(const Input& input,
                             Index vehicle_rank,

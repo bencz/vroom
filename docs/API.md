@@ -125,6 +125,7 @@ A `vehicle` object has the following properties:
 | [`max_travel_time`] | an integer defining the maximum travel time for this vehicle |
 | [`max_distance`] | an integer defining the maximum distance for this vehicle |
 | [`steps`] | an array of `vehicle_step` objects describing a custom route for this vehicle |
+| [`priority_order`] | boolean (defaults to `false`), if `true` tasks in route for this vehicle are visited by non-increasing `priority` value |
 
 A `cost` object has the following properties:
 
@@ -228,9 +229,18 @@ providing a `skills` key default to providing an empty array.
 ### Task priorities
 
 Useful in situations where not all tasks can be performed, to gain
-some control on which tasks are unassigned. Setting a high `priority`
-value for some tasks will tend as much as possible to have them
-included in the solution over lower-priority tasks.
+some control on which tasks are unassigned. Priorities are
+hierarchical: assigning one more task with a given `priority` value
+is always preferred over assigning any number of tasks with lower
+priorities. As an example, a solution leaving a single task with
+priority `100` unassigned is considered worse than a solution
+leaving out any number of tasks with priority `99` or lower.
+
+Priorities do not impact the order of tasks in routes, unless
+`priority_order` is set to `true` for a vehicle. In that case, tasks
+in route for this vehicle are always visited by non-increasing
+priority value, possibly at the expense of a higher route cost. When
+providing `steps` for such a vehicle, they have to follow that order.
 
 ### Task setup times
 

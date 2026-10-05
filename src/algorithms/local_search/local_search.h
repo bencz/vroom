@@ -85,6 +85,14 @@ private:
 
   void remove_from_routes();
 
+  // Try to assign unassigned jobs by removing lower-priority jobs
+  // from a route, for a net priority gain. Return true if solution
+  // has been modified.
+  bool try_priority_improvements();
+
+  // Update all solution state data for route v.
+  void update_route_state(Index v);
+
   // Used once the regular perturbation scheme is exhausted while
   // there is still time left: randomly remove strings of consecutive
   // jobs in a few close routes.
