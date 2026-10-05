@@ -21,15 +21,12 @@ std::list<Index> christofides(const Matrix<UserCost>& sym_matrix) {
   // tree with a minimum weight perfect matching on its odd degree
   // vertices.
 
-  // Compute symmetric graph from the matrix.
-  const auto sym_graph = utils::UndirectedGraph<UserCost>(sym_matrix);
-
   // Work on a minimum spanning tree seen as a graph.
-  const auto mst_graph = utils::minimum_spanning_tree(sym_graph);
+  const auto mst_graph = utils::minimum_spanning_tree(sym_matrix);
 
   // Getting minimum spanning tree of associated graph under the form
   // of an adjacency list.
-  const std::unordered_map<Index, std::list<Index>> adjacency_list =
+  const std::map<Index, std::list<Index>> adjacency_list =
     mst_graph.get_adjacency_list();
 
   // Getting odd degree vertices from the minimum spanning tree.
@@ -45,13 +42,13 @@ std::list<Index> christofides(const Matrix<UserCost>& sym_matrix) {
     sym_matrix.get_sub_matrix(mst_odd_vertices);
 
   // Computing minimum weight perfect matching.
-  std::unordered_map<Index, Index> mwpm =
+  std::map<Index, Index> mwpm =
     utils::minimum_weight_perfect_matching(sub_matrix);
 
   // Storing those edges from mwpm that are coherent regarding
   // symmetry (y -> x whenever x -> y). Remembering the rest of them
   // for further use. Edges are not doubled in mwpm_final.
-  std::unordered_map<Index, Index> mwpm_final;
+  std::map<Index, Index> mwpm_final;
   std::vector<Index> wrong_vertices;
 
   for (const auto& [source, target] : mwpm) {
@@ -63,7 +60,7 @@ std::list<Index> christofides(const Matrix<UserCost>& sym_matrix) {
   }
 
   if (!wrong_vertices.empty()) {
-    const std::unordered_map<Index, Index> remaining_greedy_mwpm =
+    const std::map<Index, Index> remaining_greedy_mwpm =
       utils::greedy_symmetric_approx_mwpm(
         sub_matrix.get_sub_matrix(wrong_vertices));
 
@@ -103,7 +100,7 @@ std::list<Index> christofides(const Matrix<UserCost>& sym_matrix) {
 
   // Hierholzer's algorithm: building and joining closed tours with
   // vertices that still have adjacent edges.
-  std::unordered_map<Index, std::list<Index>> eulerian_adjacency_list =
+  std::map<Index, std::list<Index>> eulerian_adjacency_list =
     eulerian_graph.get_adjacency_list();
 
   std::list<Index> eulerian_path;
@@ -112,13 +109,16 @@ std::list<Index> christofides(const Matrix<UserCost>& sym_matrix) {
   // Building and joining tours as long as necessary.
   bool complete_tour;
 
+  // Vertices before scan_start in eulerian_path have no remaining
+  // adjacent edge, so there is no need to scan them again.
+  auto scan_start = eulerian_path.begin();
+
   do {
     complete_tour = true; // presumed complete
     std::list<Index>::iterator new_tour_start;
     // Finding first element of eulerian_path that still has an
     // adjacent edge (if any).
-    for (auto vertex = eulerian_path.begin(); vertex != eulerian_path.end();
-         ++vertex) {
+    for (auto vertex = scan_start; vertex != eulerian_path.end(); ++vertex) {
       if (!eulerian_adjacency_list[*vertex].empty()) {
         new_tour_start = vertex;
         complete_tour = false;
@@ -150,7 +150,8 @@ std::list<Index> christofides(const Matrix<UserCost>& sym_matrix) {
       } while (current_vertex != initial_vertex);
 
       // Adding new tour to existing eulerian path.
-      eulerian_path.insert(new_tour_start, new_tour.begin(), new_tour.end());
+      scan_start =
+        eulerian_path.insert(new_tour_start, new_tour.begin(), new_tour.end());
     }
   } while (!complete_tour);
 

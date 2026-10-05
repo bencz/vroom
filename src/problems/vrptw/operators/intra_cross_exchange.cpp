@@ -118,8 +118,4 @@ void IntraCrossExchange::apply() {
                       _last_rank);
 }
 
-std::vector<Index> IntraCrossExchange::addition_candidates() const {
-  return {s_vehicle};
-}
-
 } // namespace vroom::vrptw

@@ -25,7 +25,7 @@ struct SolutionIndicators {
   Eval eval;
   unsigned used_vehicles{0};
   // Hash based on the ordered sizes of routes in the solution.
-  uint32_t routes_hash;
+  uint32_t routes_hash{0};
 
   SolutionIndicators() = default;
 

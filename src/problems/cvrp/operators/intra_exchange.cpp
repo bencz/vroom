@@ -80,7 +80,9 @@ void IntraExchange::apply() {
 }
 
 std::vector<Index> IntraExchange::addition_candidates() const {
-  return {};
+  // Route may get shorter, leaving room for additions with regard to
+  // vehicle range bounds or time windows.
+  return {s_vehicle};
 }
 
 std::vector<Index> IntraExchange::update_candidates() const {

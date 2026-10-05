@@ -17,7 +17,7 @@ namespace vroom::cvrp {
 class UnassignedExchange : public ls::Operator {
 protected:
   const Index _u; // Unassigned job to insert.
-  std::unordered_set<Index>& _unassigned;
+  std::set<Index>& _unassigned;
   const Index _first_rank;
   const Index _last_rank;
   std::vector<Index> _moved_jobs;
@@ -29,7 +29,7 @@ protected:
 public:
   UnassignedExchange(const Input& input,
                      const utils::SolutionState& sol_state,
-                     std::unordered_set<Index>& unassigned,
+                     std::set<Index>& unassigned,
                      RawRoute& s_raw_route,
                      Index s_vehicle,
                      Index s_rank,

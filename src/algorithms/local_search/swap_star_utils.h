@@ -12,6 +12,8 @@ All rights reserved (see LICENSE).
 
 #include <algorithm>
 
+#include <array>
+
 #include "algorithms/local_search/top_insertions.h"
 #include "structures/typedefs.h"
 #include "structures/vroom/input/input.h"
@@ -48,7 +50,18 @@ struct SwapChoice {
   }
 };
 
-const auto SwapChoiceCmp = [](const SwapChoice& lhs, const SwapChoice& rhs) {
+// Lightweight version of SwapChoice, without amounts, used to store
+// options without allocating.
+struct SwapCandidate {
+  Eval gain;
+  Index s_rank{0};
+  Index t_rank{0};
+  Index insertion_in_source{0};
+  Index insertion_in_target{0};
+};
+
+const auto SwapChoiceCmp = [](const SwapCandidate& lhs,
+                              const SwapCandidate& rhs) {
   return rhs.gain < lhs.gain;
 };
 
@@ -60,7 +73,7 @@ bool valid_choice_for_insertion_ranks(const utils::SolutionState& sol_state,
                                       const Route& source,
                                       const Index t_vehicle,
                                       const Route& target,
-                                      const SwapChoice& sc) {
+                                      const SwapCandidate& sc) {
   const auto source_job_rank = source.route[sc.s_rank];
   const auto target_job_rank = target.route[sc.t_rank];
 
@@ -217,19 +230,50 @@ SwapChoice compute_best_swap_star_choice(const Input& input,
   const auto& t_delivery_margin = target.delivery_margin();
   const auto& t_pickup_margin = target.pickup_margin();
 
+  // sol_state.node_gains contains the Delta value we're looking for
+  // except in the case of a single-step route with a start and end,
+  // where the start->end cost is not accounted for.
+  const auto source_start_end_cost =
+    (source.size() == 1 && s_v.has_start() && s_v.has_end())
+      ? s_v.eval(s_v.start.value().index(), s_v.end.value().index())
+      : Eval();
+  const auto target_start_end_cost =
+    (target.size() == 1 && t_v.has_start() && t_v.has_end())
+      ? t_v.eval(t_v.start.value().index(), t_v.end.value().index())
+      : Eval();
+
+  // Options for a given pair of ranks, stored without allocating.
+  constexpr std::size_t MAX_SWAP_CHOICES = 16;
+  std::array<SwapCandidate, MAX_SWAP_CHOICES> swap_choice_options;
+  std::size_t nb_options = 0;
+  const auto add_option = [&](const Eval& gain,
+                              unsigned s_rank,
+                              unsigned t_rank,
+                              Index insertion_in_source,
+                              Index insertion_in_target) {
+    const SwapCandidate sc{gain,
+                           static_cast<Index>(s_rank),
+                           static_cast<Index>(t_rank),
+                           insertion_in_source,
+                           insertion_in_target};
+    if (valid_choice_for_insertion_ranks(sol_state,
+                                         s_vehicle,
+                                         source,
+                                         t_vehicle,
+                                         target,
+                                         sc)) {
+      assert(nb_options < MAX_SWAP_CHOICES);
+      swap_choice_options[nb_options] = sc;
+      ++nb_options;
+    }
+  };
+
   for (unsigned s_rank = 0; s_rank < source.route.size(); ++s_rank) {
     const auto& target_insertions = top_insertions_in_target[s_rank];
     if (target_insertions[0].eval == NO_EVAL) {
       continue;
     }
 
-    // sol_state.node_gains contains the Delta value we're looking for
-    // except in the case of a single-step route with a start and end,
-    // where the start->end cost is not accounted for.
-    const auto source_start_end_cost =
-      (source.size() == 1 && s_v.has_start() && s_v.has_end())
-        ? s_v.eval(s_v.start.value().index(), s_v.end.value().index())
-        : Eval();
     const auto source_delta =
       sol_state.node_gains[s_vehicle][s_rank] - source_start_end_cost;
 
@@ -239,11 +283,6 @@ SwapChoice compute_best_swap_star_choice(const Input& input,
         continue;
       }
 
-      // Same as above.
-      const auto target_start_end_cost =
-        (target.size() == 1 && t_v.has_start() && t_v.has_end())
-          ? t_v.eval(t_v.start.value().index(), t_v.end.value().index())
-          : Eval();
       const auto target_delta =
         sol_state.node_gains[t_vehicle][t_rank] - target_start_end_cost;
 
@@ -265,9 +304,7 @@ SwapChoice compute_best_swap_star_choice(const Input& input,
                                    source.route,
                                    s_rank);
 
-      std::vector<SwapChoice> swap_choice_options;
-      constexpr std::size_t MAX_SWAP_CHOICES = 16;
-      swap_choice_options.reserve(MAX_SWAP_CHOICES);
+      nb_options = 0;
 
       // Options for in-place insertion in source route include
       // in-place insertion in target route and other relevant
@@ -282,15 +319,7 @@ SwapChoice compute_best_swap_star_choice(const Input& input,
         // route if max travel time constraint is OK.
         if (best_gain < current_gain &&
             t_v.ok_for_range_bounds(t_eval - in_place_t_gain)) {
-          SwapChoice sc(current_gain, s_rank, t_rank, s_rank, t_rank);
-          if (valid_choice_for_insertion_ranks(sol_state,
-                                               s_vehicle,
-                                               source,
-                                               t_vehicle,
-                                               target,
-                                               sc)) {
-            swap_choice_options.push_back(std::move(sc));
-          }
+          add_option(current_gain, s_rank, t_rank, s_rank, t_rank);
         }
 
         for (const auto& ti : target_insertions) {
@@ -300,15 +329,7 @@ SwapChoice compute_best_swap_star_choice(const Input& input,
             current_gain = in_place_s_gain + t_gain;
             if (best_gain < current_gain &&
                 t_v.ok_for_range_bounds(t_eval - t_gain)) {
-              SwapChoice sc(current_gain, s_rank, t_rank, s_rank, ti.rank);
-              if (valid_choice_for_insertion_ranks(sol_state,
-                                                   s_vehicle,
-                                                   source,
-                                                   t_vehicle,
-                                                   target,
-                                                   sc)) {
-                swap_choice_options.push_back(std::move(sc));
-              }
+              add_option(current_gain, s_rank, t_rank, s_rank, ti.rank);
             }
           }
         }
@@ -332,15 +353,7 @@ SwapChoice compute_best_swap_star_choice(const Input& input,
           current_gain = s_gain + in_place_t_gain;
           if (best_gain < current_gain &&
               t_v.ok_for_range_bounds(t_eval - in_place_t_gain)) {
-            SwapChoice sc(current_gain, s_rank, t_rank, si.rank, t_rank);
-            if (valid_choice_for_insertion_ranks(sol_state,
-                                                 s_vehicle,
-                                                 source,
-                                                 t_vehicle,
-                                                 target,
-                                                 sc)) {
-              swap_choice_options.push_back(std::move(sc));
-            }
+            add_option(current_gain, s_rank, t_rank, si.rank, t_rank);
           }
 
           for (const auto& ti : target_insertions) {
@@ -350,26 +363,20 @@ SwapChoice compute_best_swap_star_choice(const Input& input,
               current_gain = s_gain + t_gain;
               if (best_gain < current_gain &&
                   t_v.ok_for_range_bounds(t_eval - t_gain)) {
-                SwapChoice sc(current_gain, s_rank, t_rank, si.rank, ti.rank);
-                if (valid_choice_for_insertion_ranks(sol_state,
-                                                     s_vehicle,
-                                                     source,
-                                                     t_vehicle,
-                                                     target,
-                                                     sc)) {
-                  swap_choice_options.push_back(std::move(sc));
-                }
+                add_option(current_gain, s_rank, t_rank, si.rank, ti.rank);
               }
             }
           }
         }
       }
 
-      std::ranges::sort(swap_choice_options, SwapChoiceCmp);
+      const auto options_end = swap_choice_options.begin() + nb_options;
+      std::ranges::sort(swap_choice_options.begin(),
+                        options_end,
+                        SwapChoiceCmp);
 
-      assert(swap_choice_options.size() <= MAX_SWAP_CHOICES);
-
-      for (const auto& sc : swap_choice_options) {
+      for (auto it = swap_choice_options.begin(); it != options_end; ++it) {
+        const auto& sc = *it;
         // Browse interesting options by decreasing gain and check for
         // validity.
 
@@ -471,7 +478,11 @@ SwapChoice compute_best_swap_star_choice(const Input& input,
 
           if (target_valid) {
             best_gain = sc.gain;
-            best_choice = sc;
+            best_choice = SwapChoice(sc.gain,
+                                     sc.s_rank,
+                                     sc.t_rank,
+                                     sc.insertion_in_source,
+                                     sc.insertion_in_target);
             best_choice.source_range_delivery = source_delivery;
             best_choice.target_range_delivery = target_delivery;
             // Options are ordered by decreasing gain so we stop at

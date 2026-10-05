@@ -8,6 +8,7 @@ All rights reserved (see LICENSE).
 */
 
 #include <algorithm>
+#include <numeric>
 
 #include "utils/helpers.h"
 
@@ -17,7 +18,7 @@ namespace vroom::cvrp {
 
 PriorityReplace::PriorityReplace(const Input& input,
                                  const utils::SolutionState& sol_state,
-                                 std::unordered_set<Index>& unassigned,
+                                 std::set<Index>& unassigned,
                                  RawRoute& s_raw_route,
                                  Index s_vehicle,
                                  Index s_rank,
@@ -33,10 +34,12 @@ PriorityReplace::PriorityReplace(const Input& input,
              s_raw_route,
              s_vehicle,
              t_rank),
-    _start_priority_gain(_input.jobs[u].priority -
-                         _sol_state.fwd_priority[s_vehicle][s_rank]),
-    _end_priority_gain(_input.jobs[u].priority -
-                       _sol_state.bwd_priority[s_vehicle][t_rank]),
+    _start_priority_gain(
+      utils::priority_gain(_input.jobs[u].priority,
+                           _sol_state.fwd_priority[s_vehicle][s_rank])),
+    _end_priority_gain(
+      utils::priority_gain(_input.jobs[u].priority,
+                           _sol_state.bwd_priority[s_vehicle][t_rank])),
     _start_assigned_number(s_route.size() - s_rank),
     _end_assigned_number(t_rank + 1),
     _u(u),
@@ -189,7 +192,10 @@ unsigned PriorityReplace::assigned() const {
 }
 
 std::vector<Index> PriorityReplace::addition_candidates() const {
-  return {s_vehicle};
+  // Replaced jobs become unassigned and may fit in any other route.
+  std::vector<Index> candidates(_input.vehicles.size());
+  std::iota(candidates.begin(), candidates.end(), 0);
+  return candidates;
 }
 
 std::vector<Index> PriorityReplace::update_candidates() const {

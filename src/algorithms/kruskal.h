@@ -14,8 +14,9 @@ All rights reserved (see LICENSE).
 
 namespace vroom::utils {
 
-template <class T>
-UndirectedGraph<T> minimum_spanning_tree(const UndirectedGraph<T>& graph);
+// Compute a minimum spanning tree for the complete graph defined by
+// symmetric matrix m.
+template <class T> UndirectedGraph<T> minimum_spanning_tree(const Matrix<T>& m);
 
 } // namespace vroom::utils
 

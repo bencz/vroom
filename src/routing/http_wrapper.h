@@ -9,6 +9,8 @@ Copyright (c) 2015-2025, Julien Coupey.
 All rights reserved (see LICENSE).
 
 */
+#include <string_view>
+
 #include "../include/rapidjson/include/rapidjson/document.h"
 
 #include "routing/wrapper.h"
@@ -17,11 +19,30 @@ All rights reserved (see LICENSE).
 
 namespace vroom::routing {
 
+// Raw HTTP response, body is stored (de-chunked if required) in raw
+// starting at body_start.
+struct HttpResponse {
+  std::string raw;
+  unsigned status = 0;
+  std::size_t body_start = 0;
+  std::size_t body_size = 0;
+
+  std::string_view body() const {
+    return std::string_view(raw).substr(body_start, body_size);
+  }
+
+  std::string_view status_line() const;
+
+  bool success() const;
+};
+
 class HttpWrapper : public Wrapper {
 private:
-  std::string send_then_receive(const std::string& query) const;
+  HttpResponse send_then_receive(const std::string& query,
+                                 std::size_t max_response_size) const;
 
-  std::string ssl_send_then_receive(const std::string& query) const;
+  HttpResponse ssl_send_then_receive(const std::string& query,
+                                     std::size_t max_response_size) const;
 
   static const std::string HTTPS_PORT;
 
@@ -41,10 +62,31 @@ protected:
               std::string route_service,
               std::string routing_args);
 
-  std::string run_query(const std::string& query) const;
+  // Response size is bounded based on the number of locations
+  // involved in the query.
+  HttpResponse run_query(const std::string& query,
+                         std::size_t nb_locations) const;
 
-  static void parse_response(rapidjson::Document& json_result,
-                             const std::string& json_content);
+  // Parse JSON response body and check for routing errors.
+  void parse_response(rapidjson::Document& json_result,
+                      const HttpResponse& response,
+                      const std::vector<Location>& locs,
+                      const std::string& service) const;
+
+  // Accessors used to validate untrusted routing responses, all
+  // throw a RoutingException on missing key or unexpected type.
+  static const rapidjson::Value& get_member(const rapidjson::Value& value,
+                                            const char* key);
+
+  static const rapidjson::Value& get_array(const rapidjson::Value& value,
+                                           const char* key);
+
+  static const rapidjson::Value& get_first(const rapidjson::Value& value,
+                                           const char* key);
+
+  static double get_number(const rapidjson::Value& value, const char* key);
+
+  static std::string get_string(const rapidjson::Value& value, const char* key);
 
   virtual std::string build_query(const std::vector<Location>& locations,
                                   const std::string& service) const = 0;
@@ -75,12 +117,18 @@ protected:
   virtual UserDuration
   get_duration_value(const rapidjson::Value& matrix_entry) const {
     // Same implementation for both OSRM and ORS.
+    if (!matrix_entry.IsNumber()) {
+      throw RoutingException("Invalid duration value in routing response.");
+    }
     return utils::round<UserDuration>(matrix_entry.GetDouble());
   }
 
   virtual UserDistance
   get_distance_value(const rapidjson::Value& matrix_entry) const {
     // Same implementation for both OSRM and ORS.
+    if (!matrix_entry.IsNumber()) {
+      throw RoutingException("Invalid distance value in routing response.");
+    }
     return utils::round<UserDistance>(matrix_entry.GetDouble());
   }
 
@@ -89,19 +137,17 @@ protected:
 
   virtual UserDuration get_leg_duration(const rapidjson::Value& leg) const {
     // Same implementation for both OSRM and ORS.
-    assert(leg.HasMember("duration"));
-    return utils::round<UserDuration>(leg["duration"].GetDouble());
+    return utils::round<UserDuration>(get_number(leg, "duration"));
   }
 
   virtual UserDistance get_leg_distance(const rapidjson::Value& leg) const {
     // Same implementation for both OSRM and ORS.
-    assert(leg.HasMember("distance"));
-    return utils::round<UserDistance>(leg["distance"].GetDouble());
+    return utils::round<UserDistance>(get_number(leg, "distance"));
   }
 
   virtual std::string get_geometry(rapidjson::Value& result) const {
     // Same implementation for both OSRM and ORS.
-    return result["routes"][0]["geometry"].GetString();
+    return get_string(get_first(result, "routes"), "geometry");
   }
 
   void add_geometry(Route& route) const override;

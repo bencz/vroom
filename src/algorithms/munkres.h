@@ -10,19 +10,17 @@ All rights reserved (see LICENSE).
 
 */
 
-#include <unordered_map>
+#include <map>
 
 #include "structures/generic/matrix.h"
 
 namespace vroom::utils {
 
 template <class T>
-std::unordered_map<Index, Index>
-minimum_weight_perfect_matching(const Matrix<T>& m);
+std::map<Index, Index> minimum_weight_perfect_matching(const Matrix<T>& m);
 
 template <class T>
-std::unordered_map<Index, Index>
-greedy_symmetric_approx_mwpm(const Matrix<T>& m);
+std::map<Index, Index> greedy_symmetric_approx_mwpm(const Matrix<T>& m);
 
 } // namespace vroom::utils
 

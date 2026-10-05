@@ -10,6 +10,8 @@ All rights reserved (see LICENSE).
 
 */
 
+#include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -82,13 +84,35 @@ public:
         }
       };
 
-    std::vector<std::jthread> vehicles_threads;
-    vehicles_threads.reserve(vehicles.size());
-
+    std::vector<Index> v_ranks;
     for (Index v_rank = 0; v_rank < vehicles.size(); ++v_rank) {
       if (vehicles[v_rank].profile == this->profile) {
-        vehicles_threads.emplace_back(run_on_vehicle_at_rank, v_rank);
+        v_ranks.push_back(v_rank);
       }
+    }
+
+    // Bound the number of concurrent routing requests: each thread
+    // handles vehicles in turn until all are done or an error occurs.
+    std::atomic<std::size_t> next_rank = 0;
+    auto run_on_vehicles = [&]() {
+      for (std::size_t i = next_rank++; i < v_ranks.size(); i = next_rank++) {
+        {
+          const std::scoped_lock<std::mutex> lock(ep_m);
+          if (ep != nullptr) {
+            return;
+          }
+        }
+        run_on_vehicle_at_rank(v_ranks[i]);
+      }
+    };
+
+    const auto nb_threads =
+      std::min(static_cast<std::size_t>(MAX_ROUTING_THREADS), v_ranks.size());
+    std::vector<std::jthread> vehicles_threads;
+    vehicles_threads.reserve(nb_threads);
+
+    for (std::size_t t = 0; t < nb_threads; ++t) {
+      vehicles_threads.emplace_back(run_on_vehicles);
     }
 
     for (auto& t : vehicles_threads) {

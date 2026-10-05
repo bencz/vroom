@@ -541,7 +541,7 @@ OrderChoice TWRoute::order_choice(const Input& input,
       travel_after_break = 0;
     }
 
-    job_then_break_end = oc.b_tw->start + b.service;
+    job_then_break_end = new_b_tw->start + b.service;
   } else {
     job_then_break_end = earliest_job_end + b.service;
   }
@@ -689,7 +689,7 @@ OrderChoice TWRoute::order_choice(const Input& input,
   return oc;
 }
 
-template <std::forward_iterator Iter>
+template <std::random_access_iterator Iter>
 bool TWRoute::is_valid_addition_for_tw(const Input& input,
                                        const Amount& delivery,
                                        const Iter first_job,

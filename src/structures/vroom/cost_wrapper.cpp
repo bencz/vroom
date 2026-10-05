@@ -14,16 +14,37 @@ All rights reserved (see LICENSE).
 
 namespace vroom {
 
+namespace {
+
+double checked_speed_factor(double speed_factor) {
+  // Written to also reject NaN values.
+  if (!(0 < speed_factor && speed_factor <= MAX_SPEED_FACTOR)) {
+    throw InputException(std::format("Invalid speed factor: {}", speed_factor));
+  }
+  return speed_factor;
+}
+
+template <typename T> T checked_factor(double factor) {
+  // Make sure factors are exactly representable and leave enough
+  // room for multiplications with matrix values.
+  constexpr double max_factor = static_cast<double>(1ULL << 53);
+  if (!(factor < max_factor)) {
+    throw InputException("Too high values for vehicle costs.");
+  }
+  return static_cast<T>(std::round(factor));
+}
+
+} // namespace
+
 CostWrapper::CostWrapper(double speed_factor, Cost per_hour, Cost per_km)
   : _per_hour(per_hour),
     _per_km(per_km),
-    discrete_duration_factor(std::round(1 / speed_factor * DURATION_FACTOR)),
-    discrete_duration_cost_factor(
-      std::round(1 / speed_factor * DURATION_FACTOR * per_hour)),
-    discrete_distance_cost_factor(DISTANCE_FACTOR * per_km) {
-  if (speed_factor <= 0 || speed_factor > MAX_SPEED_FACTOR) {
-    throw InputException(std::format("Invalid speed factor: {}", speed_factor));
-  }
+    discrete_duration_factor(checked_factor<Duration>(
+      1 / checked_speed_factor(speed_factor) * DURATION_FACTOR)),
+    discrete_duration_cost_factor(checked_factor<Cost>(
+      1 / speed_factor * DURATION_FACTOR * static_cast<double>(per_hour))),
+    discrete_distance_cost_factor(
+      checked_factor<Cost>(static_cast<double>(DISTANCE_FACTOR * per_km))) {
 }
 
 void CostWrapper::set_durations_matrix(const Matrix<UserDuration>* matrix) {

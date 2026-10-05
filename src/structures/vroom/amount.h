@@ -10,8 +10,10 @@ All rights reserved (see LICENSE).
 
 */
 
+#include <algorithm>
+#include <array>
 #include <cassert>
-#include <vector>
+#include <memory>
 
 #include "structures/typedefs.h"
 
@@ -82,56 +84,153 @@ bool operator==(const AmountExpression<E1>& lhs,
 }
 
 class Amount : public AmountExpression<Amount> {
+  // Values are stored inline for usual small sizes in order to avoid
+  // heap allocations in hot code paths, with heap storage as a
+  // fallback for bigger sizes.
+  static constexpr std::size_t INLINE_CAPACITY = 4;
 
-  std::vector<Capacity> elems;
+  std::size_t _size{0};
+  std::size_t _capacity{INLINE_CAPACITY};
+  std::array<Capacity, INLINE_CAPACITY> _inline_elems{};
+  std::unique_ptr<Capacity[]> _heap_elems;
+
+  Capacity* data() {
+    return _heap_elems ? _heap_elems.get() : _inline_elems.data();
+  }
+
+  const Capacity* data() const {
+    return _heap_elems ? _heap_elems.get() : _inline_elems.data();
+  }
+
+  // Resize, discarding current values.
+  void resize_for_overwrite(std::size_t size) {
+    if (size > _capacity) {
+      _heap_elems = std::make_unique_for_overwrite<Capacity[]>(size);
+      _capacity = size;
+    }
+    _size = size;
+  }
 
 public:
   Amount() = default;
 
-  explicit Amount(std::size_t size) : elems(size, 0){};
+  explicit Amount(std::size_t size) {
+    resize_for_overwrite(size);
+    std::fill_n(data(), size, 0);
+  }
+
+  Amount(const Amount& other) {
+    resize_for_overwrite(other._size);
+    std::copy_n(other.data(), other._size, data());
+  }
+
+  Amount(Amount&& other) noexcept
+    : _size(other._size),
+      _capacity(other._capacity),
+      _inline_elems(other._inline_elems),
+      _heap_elems(std::move(other._heap_elems)) {
+    other._size = 0;
+    other._capacity = INLINE_CAPACITY;
+  }
 
   template <typename E> Amount(const AmountExpression<E>& u) {
-    elems.resize(u.size());
-    for (std::size_t i = 0; i < u.size(); ++i) {
+    resize_for_overwrite(u.size());
+    auto* elems = data();
+    for (std::size_t i = 0; i < _size; ++i) {
       elems[i] = u[i];
     }
   }
 
+  ~Amount() = default;
+
+  Amount& operator=(const Amount& other) {
+    if (this != &other) {
+      resize_for_overwrite(other._size);
+      std::copy_n(other.data(), other._size, data());
+    }
+    return *this;
+  }
+
+  Amount& operator=(Amount&& other) noexcept {
+    if (this != &other) {
+      _size = other._size;
+      _capacity = other._capacity;
+      _inline_elems = other._inline_elems;
+      _heap_elems = std::move(other._heap_elems);
+      other._size = 0;
+      other._capacity = INLINE_CAPACITY;
+    }
+    return *this;
+  }
+
+  // Evaluate expression in place, reusing existing storage. Safe
+  // with expressions involving *this as each value only depends on
+  // values at the same rank.
+  template <typename E> Amount& operator=(const AmountExpression<E>& u) {
+    const auto size = u.size();
+    if (size > _capacity) {
+      // Can't evaluate in place without overwriting values that may
+      // be used by u.
+      *this = Amount(u);
+      return *this;
+    }
+    _size = size;
+    auto* elems = data();
+    for (std::size_t i = 0; i < size; ++i) {
+      elems[i] = u[i];
+    }
+    return *this;
+  }
+
   void push_back(Capacity c) {
-    elems.push_back(c);
+    if (_size == _capacity) {
+      const auto new_capacity = 2 * _capacity;
+      auto new_elems = std::make_unique_for_overwrite<Capacity[]>(new_capacity);
+      std::copy_n(data(), _size, new_elems.get());
+      _heap_elems = std::move(new_elems);
+      _capacity = new_capacity;
+    }
+    data()[_size] = c;
+    ++_size;
   }
 
   Capacity operator[](std::size_t i) const {
-    return elems[i];
+    assert(i < _size);
+    return data()[i];
   }
 
   Capacity& operator[](std::size_t i) {
-    return elems[i];
+    assert(i < _size);
+    return data()[i];
   }
 
   std::size_t size() const {
-    return elems.size();
+    return _size;
   }
 
   Amount& operator+=(const Amount& rhs) {
     assert(this->size() == rhs.size());
-    for (std::size_t i = 0; i < this->size(); ++i) {
-      (*this)[i] += rhs[i];
+    auto* elems = data();
+    const auto* rhs_elems = rhs.data();
+    for (std::size_t i = 0; i < _size; ++i) {
+      elems[i] += rhs_elems[i];
     }
     return *this;
   }
 
   Amount& operator-=(const Amount& rhs) {
     assert(this->size() == rhs.size());
-    for (std::size_t i = 0; i < this->size(); ++i) {
-      (*this)[i] -= rhs[i];
+    auto* elems = data();
+    const auto* rhs_elems = rhs.data();
+    for (std::size_t i = 0; i < _size; ++i) {
+      elems[i] -= rhs_elems[i];
     }
     return *this;
   }
 
 #if USE_PYTHON_BINDINGS
   Capacity* get_data() {
-    return elems.data();
+    return data();
   };
 #endif
 

@@ -243,7 +243,9 @@ void IntraCrossExchange::apply() {
 }
 
 std::vector<Index> IntraCrossExchange::addition_candidates() const {
-  return {};
+  // Route may get shorter, leaving room for additions with regard to
+  // vehicle range bounds or time windows.
+  return {s_vehicle};
 }
 
 std::vector<Index> IntraCrossExchange::update_candidates() const {

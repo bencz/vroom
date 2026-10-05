@@ -11,8 +11,10 @@ All rights reserved (see LICENSE).
 */
 
 #include <optional>
+#include <set>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <vector>
 
 #include "structures/typedefs.h"
@@ -24,8 +26,19 @@ All rights reserved (see LICENSE).
 namespace vroom::utils {
 
 template <typename T> T round(double value) {
+  static_assert(std::is_unsigned_v<T>);
   constexpr double round_increment = 0.5;
-  return static_cast<T>(value + round_increment);
+
+  // Avoid undefined behavior when converting NaN, negative or too
+  // big values.
+  if (!(value > 0)) {
+    return 0;
+  }
+  const double rounded = value + round_increment;
+  if (!(rounded < static_cast<double>(std::numeric_limits<T>::max()))) {
+    return std::numeric_limits<T>::max();
+  }
+  return static_cast<T>(rounded);
 }
 
 TimePoint now();
@@ -38,6 +51,24 @@ inline UserCost add_without_overflow(UserCost a, UserCost b) {
       "Too high cost values, stopping to avoid overflowing.");
   }
   return a + b;
+}
+
+inline Cost add_without_overflow(Cost a, Cost b) {
+  Cost res;
+  if (__builtin_add_overflow(a, b, &res)) {
+    throw InputException(
+      "Too high cost values, stopping to avoid overflowing.");
+  }
+  return res;
+}
+
+inline Cost mul_without_overflow(Cost a, Cost b) {
+  Cost res;
+  if (__builtin_mul_overflow(a, b, &res)) {
+    throw InputException(
+      "Too high cost values, stopping to avoid overflowing.");
+  }
+  return res;
 }
 
 // Taken from https://stackoverflow.com/a/72073933.
@@ -260,15 +291,20 @@ inline Eval get_range_removal_gain(const SolutionState& sol_state,
   Eval removal_gain;
 
   if (last_rank > first_rank) {
-    // Gain related to removed portion.
-    removal_gain += sol_state.fwd_evals[v][v][last_rank - 1];
-    removal_gain -= sol_state.fwd_evals[v][v][first_rank];
+    const auto& fwd_evals = sol_state.fwd_evals[v][sol_state.travel_class[v]];
+    const auto& task_class = sol_state.task_class[v];
+    const auto& fwd_setup_evals = sol_state.fwd_setup_evals[v][task_class];
+    const auto& service_evals = sol_state.service_evals[v][task_class];
 
-    removal_gain += sol_state.fwd_setup_evals[v][v][last_rank - 1];
-    removal_gain += sol_state.service_evals[v][v][last_rank - 1];
+    // Gain related to removed portion.
+    removal_gain += fwd_evals[last_rank - 1];
+    removal_gain -= fwd_evals[first_rank];
+
+    removal_gain += fwd_setup_evals[last_rank - 1];
+    removal_gain += service_evals[last_rank - 1];
     if (first_rank > 0) {
-      removal_gain -= sol_state.fwd_setup_evals[v][v][first_rank - 1];
-      removal_gain -= sol_state.service_evals[v][v][first_rank - 1];
+      removal_gain -= fwd_setup_evals[first_rank - 1];
+      removal_gain -= service_evals[first_rank - 1];
     }
   }
 
@@ -299,39 +335,46 @@ addition_eval_delta(const Input& input,
   const auto v2_rank = route_2.v_rank;
   const auto& v1 = input.vehicles[v1_rank];
 
+  const auto v1_travel_class = sol_state.travel_class[v1_rank];
+  const auto v1_task_class = sol_state.task_class[v1_rank];
+
   // Common part of the cost.
   Eval cost_delta =
     get_range_removal_gain(sol_state, v1_rank, first_rank, last_rank);
 
   // Tasks service eval.
   Eval service_delta =
-    -sol_state.service_evals[v2_rank][v1_rank][insertion_end - 1];
+    -sol_state.service_evals[v2_rank][v1_task_class][insertion_end - 1];
   if (insertion_start > 0) {
     service_delta +=
-      sol_state.service_evals[v2_rank][v1_rank][insertion_start - 1];
+      sol_state.service_evals[v2_rank][v1_task_class][insertion_start - 1];
   }
 
   // Part of the cost that may depend on insertion orientation.
 
   // Edges cost eval.
-  Eval straight_delta = sol_state.fwd_evals[v2_rank][v1_rank][insertion_start];
-  straight_delta -= sol_state.fwd_evals[v2_rank][v1_rank][insertion_end - 1];
+  Eval straight_delta =
+    sol_state.fwd_evals[v2_rank][v1_travel_class][insertion_start];
+  straight_delta -=
+    sol_state.fwd_evals[v2_rank][v1_travel_class][insertion_end - 1];
 
-  Eval reversed_delta = sol_state.bwd_evals[v2_rank][v1_rank][insertion_start];
-  reversed_delta -= sol_state.bwd_evals[v2_rank][v1_rank][insertion_end - 1];
+  Eval reversed_delta =
+    sol_state.bwd_evals[v2_rank][v1_travel_class][insertion_start];
+  reversed_delta -=
+    sol_state.bwd_evals[v2_rank][v1_travel_class][insertion_end - 1];
 
   // Tasks setup eval, this purposefully does not include setup time
   // for the first job in the previous route context (using
   // insertion_start, not the previous rank).
   straight_delta -=
-    sol_state.fwd_setup_evals[v2_rank][v1_rank][insertion_end - 1];
+    sol_state.fwd_setup_evals[v2_rank][v1_task_class][insertion_end - 1];
   straight_delta +=
-    sol_state.fwd_setup_evals[v2_rank][v1_rank][insertion_start];
+    sol_state.fwd_setup_evals[v2_rank][v1_task_class][insertion_start];
 
   reversed_delta -=
-    sol_state.bwd_setup_evals[v2_rank][v1_rank][insertion_start];
+    sol_state.bwd_setup_evals[v2_rank][v1_task_class][insertion_start];
   reversed_delta +=
-    sol_state.bwd_setup_evals[v2_rank][v1_rank][insertion_end - 1];
+    sol_state.bwd_setup_evals[v2_rank][v1_task_class][insertion_end - 1];
 
   // Determine useful values if present.
   const auto [before_first, first_index, last_index] =
@@ -667,6 +710,15 @@ inline Eval in_place_delta_eval(const Input& input,
          v.task_eval(added_task_duration);
 }
 
+// Net priority gain when replacing tasks with a priority sum of
+// replaced_priority by a task with priority new_priority, zero if
+// there is no net gain.
+inline Priority priority_gain(Priority new_priority,
+                              Priority replaced_priority) {
+  return (replaced_priority < new_priority) ? new_priority - replaced_priority
+                                            : 0;
+}
+
 Priority priority_sum_for_route(const Input& input,
                                 const std::vector<Index>& route);
 
@@ -692,7 +744,7 @@ Solution format_solution(const Input& input, const RawSolution& raw_routes);
 
 Route format_route(const Input& input,
                    const TWRoute& tw_r,
-                   std::unordered_set<Index>& unassigned_ranks);
+                   std::set<Index>& unassigned_ranks);
 
 Solution format_solution(const Input& input, const TWSolution& tw_routes);
 

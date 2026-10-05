@@ -140,8 +140,20 @@ inline void seed_route(const Input& input,
 template <class Route> struct UnassignedCosts {
   const Vehicle& vehicle;
   Cost max_edge_cost;
+  // Minimal cost to reach an unassigned job from route (including
+  // job service cost), and to reach route from an unassigned job. A
+  // missing start (resp. end) acts as a virtual location with zero
+  // cost edges to all jobs so that lower bounds remain valid for open
+  // routes.
   std::vector<Cost> min_route_to_unassigned;
   std::vector<Cost> min_unassigned_to_route;
+
+  Cost service_cost(const Job& job) const {
+    // The purpose here is to generate insertion lower bounds so we
+    // only account for service times (no setup) which are
+    // independent of insertion rank.
+    return vehicle.task_eval(job.services[vehicle.type]).cost;
+  }
 
   UnassignedCosts(const Input& input,
                   Route& route,
@@ -156,47 +168,42 @@ template <class Route> struct UnassignedCosts {
       const auto& unassigned_job = input.jobs[job_rank];
       const auto unassigned_job_index = unassigned_job.index();
 
-      // The purpose here is to generate insertion lower bounds so we
-      // only account for service times (no setup) which are
-      // independent of insertion rank.
-      const auto added_service = unassigned_job.services[vehicle.type];
-      const auto service_cost = vehicle.task_eval(added_service).cost;
+      const auto job_service_cost = service_cost(unassigned_job);
 
-      if (vehicle.has_start()) {
-        const auto start_to_job =
-          vehicle.eval(vehicle.start.value().index(), unassigned_job_index)
-            .cost;
-        min_route_to_unassigned[job_rank] = start_to_job + service_cost;
-      }
+      min_route_to_unassigned[job_rank] =
+        vehicle.has_start()
+          ? vehicle.eval(vehicle.start.value().index(), unassigned_job_index)
+              .cost
+          : 0;
+      min_route_to_unassigned[job_rank] += job_service_cost;
 
-      if (vehicle.has_end()) {
-        const auto job_to_end =
-          vehicle.eval(unassigned_job_index, vehicle.end.value().index()).cost;
-        min_unassigned_to_route[job_rank] = job_to_end + service_cost;
-      }
+      min_unassigned_to_route[job_rank] =
+        vehicle.has_end()
+          ? vehicle.eval(unassigned_job_index, vehicle.end.value().index()).cost
+          : 0;
 
       for (const auto j : route.route) {
         const auto job_index = input.jobs[j].index();
 
         const auto job_to_unassigned =
-          vehicle.eval(job_index, unassigned_job_index).cost + service_cost;
+          vehicle.eval(job_index, unassigned_job_index).cost + job_service_cost;
         min_route_to_unassigned[job_rank] =
           std::min(min_route_to_unassigned[job_rank], job_to_unassigned);
 
         const auto unassigned_to_job =
-          vehicle.eval(unassigned_job_index, job_index).cost + service_cost;
+          vehicle.eval(unassigned_job_index, job_index).cost;
         min_unassigned_to_route[job_rank] =
           std::min(min_unassigned_to_route[job_rank], unassigned_to_job);
       }
     }
   }
 
-  double get_insertion_lower_bound(Index j) {
+  double get_insertion_lower_bound(Index j) const {
     return static_cast<double>(min_route_to_unassigned[j] +
                                min_unassigned_to_route[j] - max_edge_cost);
   }
 
-  double get_pd_insertion_lower_bound(const Input& input, Index p) {
+  double get_pd_insertion_lower_bound(const Input& input, Index p) const {
     assert(input.jobs[p].type == JOB_TYPE::PICKUP);
 
     // Situation where pickup and delivery are not inserted in a row.
@@ -208,8 +215,8 @@ template <class Route> struct UnassignedCosts {
     // Situation where delivery is inserted next to the pickup.
     const auto next_insertion = static_cast<double>(
       min_route_to_unassigned[p] + min_unassigned_to_route[p + 1] +
-      vehicle.eval(input.jobs[p].index(), input.jobs[p + 1].index()).cost -
-      max_edge_cost);
+      vehicle.eval(input.jobs[p].index(), input.jobs[p + 1].index()).cost +
+      service_cost(input.jobs[p + 1]) - max_edge_cost);
 
     return std::min(apart_insertion, next_insertion);
   }
@@ -225,16 +232,14 @@ template <class Route> struct UnassignedCosts {
       const auto& unassigned_job = input.jobs[j];
       const auto unassigned_job_index = unassigned_job.index();
 
-      const auto added_service = unassigned_job.services[vehicle.type];
-      const auto service_cost = vehicle.task_eval(added_service).cost;
-
       const auto to_unassigned =
-        vehicle.eval(inserted_index, unassigned_job_index).cost + service_cost;
+        vehicle.eval(inserted_index, unassigned_job_index).cost +
+        service_cost(unassigned_job);
       min_route_to_unassigned[j] =
         std::min(min_route_to_unassigned[j], to_unassigned);
 
       const auto from_unassigned =
-        vehicle.eval(unassigned_job_index, inserted_index).cost + service_cost;
+        vehicle.eval(unassigned_job_index, inserted_index).cost;
       min_unassigned_to_route[j] =
         std::min(min_unassigned_to_route[j], from_unassigned);
     }

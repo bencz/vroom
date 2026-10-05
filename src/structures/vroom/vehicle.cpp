@@ -145,7 +145,7 @@ Duration Vehicle::available_duration() const {
   const Duration breaks_duration =
     std::accumulate(breaks.begin(),
                     breaks.end(),
-                    0,
+                    Duration{0},
                     [](auto sum, const auto& b) { return sum + b.service; });
 
   assert(breaks_duration <= available);

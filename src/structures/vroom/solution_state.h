@@ -10,6 +10,8 @@ All rights reserved (see LICENSE).
 
 */
 
+#include <set>
+
 #include "structures/typedefs.h"
 #include "structures/vroom/bbox.h"
 #include "structures/vroom/input/input.h"
@@ -22,30 +24,48 @@ private:
   const Input& _input;
   const std::size_t _nb_vehicles;
 
+  // Vehicle rank representative for each travel and task class.
+  std::vector<Index> _travel_class_vehicles;
+  std::vector<Index> _task_class_vehicles;
+
+  void reset_insertion_ranks(Index v, std::size_t route_size);
+  void set_insertion_ranks_for_job(const TWRoute& tw_r, Index j);
+
 public:
   // Store unassigned jobs.
-  std::unordered_set<Index> unassigned;
+  // Ordered to ensure consistent iteration across platforms.
+  std::set<Index> unassigned;
 
-  // fwd_evals[v][new_v][i] stores the total cost from job at rank 0
-  // to job at rank i in the route for vehicle v, from the point of
-  // view of a vehicle new_v. bwd_evals[v][new_v][i] stores the total
-  // cost from job at rank i to job at rank 0 (i.e. when *reversing*
-  // all edges) in the route for vehicle v, from the point of view of
-  // a vehicle new_v.
+  // Vehicles sharing the same travel_class have identical evals for
+  // all edges. Vehicles sharing the same task_class have identical
+  // service and setup evals for all jobs, as well as the same start.
+  // Values below are stored per class rather than per vehicle to
+  // avoid redundant computations and memory usage.
+  std::vector<Index> travel_class;
+  std::vector<Index> task_class;
+
+  // fwd_evals[v][travel_class[new_v]][i] stores the total cost from
+  // job at rank 0 to job at rank i in the route for vehicle v, from
+  // the point of view of a vehicle new_v.
+  // bwd_evals[v][travel_class[new_v]][i] stores the total cost from
+  // job at rank i to job at rank 0 (i.e. when *reversing* all edges)
+  // in the route for vehicle v, from the point of view of a vehicle
+  // new_v.
   std::vector<std::vector<std::vector<Eval>>> fwd_evals;
   std::vector<std::vector<std::vector<Eval>>> bwd_evals;
 
-  // service_evals[v][new_v][i] stores the total service cost from job
-  // at rank 0 to job at rank i (included) in the route for vehicle v,
-  // from the point of view of a vehicle new_v.
+  // service_evals[v][task_class[new_v]][i] stores the total service
+  // cost from job at rank 0 to job at rank i (included) in the route
+  // for vehicle v, from the point of view of a vehicle new_v.
   std::vector<std::vector<std::vector<Eval>>> service_evals;
 
-  // fwd_setup_evals[v][new_v][i] stores the total setup cost from job
-  // at rank 0 to job at rank i (included) in the route for vehicle v,
-  // from the point of view of vehicle new_v.
-  // bwd_setup_evals[v][new_v][i] stores the total setup cost from
-  // last job to job at rank i included, i.e. when *reversing* route
-  // for vehicle v, from the point of view of a vehicle new_v.
+  // fwd_setup_evals[v][task_class[new_v]][i] stores the total setup
+  // cost from job at rank 0 to job at rank i (included) in the route
+  // for vehicle v, from the point of view of vehicle new_v.
+  // bwd_setup_evals[v][task_class[new_v]][i] stores the total setup
+  // cost from last job to job at rank i included, i.e. when
+  // *reversing* route for vehicle v, from the point of view of a
+  // vehicle new_v.
   std::vector<std::vector<std::vector<Eval>>> fwd_setup_evals;
   std::vector<std::vector<std::vector<Eval>>> bwd_setup_evals;
 
@@ -166,6 +186,10 @@ public:
 
   void set_insertion_ranks(const RawRoute& r);
   void set_insertion_ranks(const TWRoute& r);
+  // Only update insertion ranks for given jobs, which should not be
+  // in route.
+  void set_insertion_ranks(const RawRoute& r, const std::vector<Index>& jobs);
+  void set_insertion_ranks(const TWRoute& r, const std::vector<Index>& jobs);
 
   void update_route_eval(const RawRoute& raw_route);
 

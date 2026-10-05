@@ -26,6 +26,16 @@ inline Coordinates parse_coordinates(const rapidjson::Value& object,
   return {object[key][0].GetDouble(), object[key][1].GetDouble()};
 }
 
+// Retrieve a location index, checking it fits in Index.
+inline Index get_index(const rapidjson::Value& object,
+                       const char* key,
+                       const std::string& error_msg) {
+  if (!object[key].IsUint() || object[key].GetUint() > MAX_INDEX_VALUE) {
+    throw InputException(error_msg);
+  }
+  return static_cast<Index>(object[key].GetUint());
+}
+
 inline std::string get_string(const rapidjson::Value& object, const char* key) {
   std::string value;
   if (object.HasMember(key)) {
@@ -332,6 +342,10 @@ inline std::vector<VehicleStep> get_vehicle_steps(const rapidjson::Value& v) {
 
     for (rapidjson::SizeType i = 0; i < v["steps"].Size(); ++i) {
       const auto& json_step = v["steps"][i];
+      if (!json_step.IsObject()) {
+        throw InputException(
+          std::format("Invalid step for vehicle {}.", v["id"].GetUint64()));
+      }
 
       std::optional<UserDuration> at;
       if (json_step.HasMember("service_at")) {
@@ -411,15 +425,14 @@ inline Vehicle get_vehicle(const rapidjson::Value& json_vehicle,
   // optional start location.
   const bool has_start_coords = json_vehicle.HasMember("start");
   const bool has_start_index = json_vehicle.HasMember("start_index");
-  if (has_start_index && !json_vehicle["start_index"].IsUint()) {
-    throw InputException(
-      std::format("Invalid start_index for vehicle {}.", v_id));
-  }
 
   std::optional<Location> start;
   if (has_start_index) {
     // Custom provided matrices and index.
-    const Index start_index = json_vehicle["start_index"].GetUint();
+    const Index start_index =
+      get_index(json_vehicle,
+                "start_index",
+                std::format("Invalid start_index for vehicle {}.", v_id));
     if (has_start_coords) {
       start = Location({start_index, parse_coordinates(json_vehicle, "start")});
     } else {
@@ -435,15 +448,14 @@ inline Vehicle get_vehicle(const rapidjson::Value& json_vehicle,
   // optional end location.
   const bool has_end_coords = json_vehicle.HasMember("end");
   const bool has_end_index = json_vehicle.HasMember("end_index");
-  if (has_end_index && !json_vehicle["end_index"].IsUint()) {
-    throw InputException(
-      std::format("Invalid end_index for vehicle {}.", v_id));
-  }
 
   std::optional<Location> end;
   if (has_end_index) {
     // Custom provided matrices and index.
-    const Index end_index = json_vehicle["end_index"].GetUint();
+    const Index end_index =
+      get_index(json_vehicle,
+                "end_index",
+                std::format("Invalid end_index for vehicle {}.", v_id));
     if (has_end_coords) {
       end = Location({end_index, parse_coordinates(json_vehicle, "end")});
     } else {
@@ -483,15 +495,15 @@ inline Location get_task_location(const rapidjson::Value& v,
   // Check what info are available to build task location.
   const bool has_location_coords = v.HasMember("location");
   const bool has_location_index = v.HasMember("location_index");
-  if (has_location_index && !v["location_index"].IsUint()) {
-    throw InputException(std::format("Invalid location_index for {} {}.",
-                                     task_type,
-                                     v["id"].GetUint64()));
-  }
 
   if (has_location_index) {
     // Custom provided matrices and index.
-    const Index location_index = v["location_index"].GetUint();
+    const Index location_index =
+      get_index(v,
+                "location_index",
+                std::format("Invalid location_index for {} {}.",
+                            task_type,
+                            v["id"].GetUint64()));
     if (has_location_coords) {
       return Location({location_index, parse_coordinates(v, "location")});
     }
@@ -555,7 +567,7 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
   rapidjson::Document json_input;
 
   // Parsing input string to populate the input object.
-  if (json_input.Parse(input_str.c_str()).HasParseError()) {
+  if (json_input.Parse(input_str.data(), input_str.size()).HasParseError()) {
     const std::string error_msg =
       std::format("{} (offset: {})",
                   rapidjson::GetParseError_En(json_input.GetParseError()),

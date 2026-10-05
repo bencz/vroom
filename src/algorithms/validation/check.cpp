@@ -32,7 +32,8 @@ check_and_set_ETA(const Input& input,
   const unsigned nb_vehicles_with_input =
     std::ranges::count_if(input.vehicles,
                           [](const auto& v) { return !v.steps.empty(); });
-  const auto nb_buckets = std::min(nb_thread, nb_vehicles_with_input);
+  const auto nb_buckets =
+    std::max(1u, std::min(nb_thread, nb_vehicles_with_input));
 
   std::vector<std::vector<Index>> thread_ranks(nb_buckets,
                                                std::vector<Index>());

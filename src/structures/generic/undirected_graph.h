@@ -10,7 +10,8 @@ All rights reserved (see LICENSE).
 
 */
 
-#include <unordered_map>
+#include <list>
+#include <map>
 
 #include "structures/generic/edge.h"
 #include "structures/generic/matrix.h"
@@ -24,7 +25,7 @@ private:
   // Embedding two representations for different uses depending on
   // context.
   std::vector<Edge<T>> _edges;
-  std::unordered_map<Index, std::vector<Index>> _adjacency_list;
+  std::map<Index, std::vector<Index>> _adjacency_list;
 
 public:
   UndirectedGraph();
@@ -35,9 +36,9 @@ public:
 
   std::size_t size() const;
 
-  std::vector<Edge<T>> get_edges() const;
+  const std::vector<Edge<T>>& get_edges() const;
 
-  std::unordered_map<Index, std::list<Index>> get_adjacency_list() const;
+  std::map<Index, std::list<Index>> get_adjacency_list() const;
 };
 
 } // namespace vroom::utils

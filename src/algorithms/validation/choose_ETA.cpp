@@ -49,13 +49,47 @@ inline Duration get_violation(const std::vector<TimeWindow>& tws,
   return violation;
 }
 
+namespace {
+
+// RAII wrapper releasing glpk problem and environment.
+struct GLPKProblem {
+  glp_prob* const lp;
+
+  GLPKProblem() : lp(glp_create_prob()) {
+  }
+
+  GLPKProblem(const GLPKProblem&) = delete;
+  GLPKProblem& operator=(const GLPKProblem&) = delete;
+
+  ~GLPKProblem() {
+    glp_delete_prob(lp);
+    glp_free_env();
+  }
+};
+
+void run_intopt(glp_prob* lp, const glp_iocp& parm, Id v_id) {
+  switch (const auto ret = glp_intopt(lp, &parm); ret) {
+  case 0:
+    break;
+  case GLP_ENOPFS:
+    // No primal feasible solution for LP relaxation.
+    throw InputException(std::format("Infeasible route for vehicle {}.", v_id));
+  default:
+    throw InternalException(
+      std::format("MIP solver failure (code {}) for vehicle {}.", ret, v_id));
+  }
+}
+
+} // namespace
+
 Route choose_ETA(const Input& input,
                  unsigned vehicle_rank,
                  const std::vector<VehicleStep>& steps) {
   const auto& v = input.vehicles[vehicle_rank];
 
-  // Number of tasks except start and end.
-  assert(2 < steps.size());
+  // Number of tasks except start and end. Vehicle steps always
+  // contain start and end, n may be 0 if no task is provided.
+  assert(2 <= steps.size());
   const unsigned n = steps.size() - 2;
 
   // Total number of time windows.
@@ -179,9 +213,12 @@ Route choose_ETA(const Input& input,
     }
     case END:
       if (v.has_end()) {
-        assert(previous_index.has_value());
+        // previous_index is only unset for a vehicle with no start
+        // and no job.
         const auto current_eval =
-          v.eval(previous_index.value(), v.end.value().index());
+          previous_index.has_value()
+            ? v.eval(previous_index.value(), v.end.value().index())
+            : Eval();
         evals.push_back(current_eval);
         relative_arrival += current_eval.duration;
 
@@ -251,17 +288,36 @@ Route choose_ETA(const Input& input,
   std::vector<Duration> horizon_end_delays(steps.size(), 0);
   std::vector<bool> step_has_TW(steps.size(), false);
   auto earliest_date = start_candidate;
+  // Waiting time induced by user-forced dates on breaks can be used
+  // for travel happening before those breaks.
+  Duration sample_break_travel_margin = 0;
+  Index sample_rank_in_J = 0;
   for (unsigned s = 0; s < steps.size(); ++s) {
     const auto& step = steps[s];
     if (s > 0) {
-      earliest_date += (relative_ETA[s] - relative_ETA[s - 1]);
+      auto increment = relative_ETA[s] - relative_ETA[s - 1];
+      if (step.type == STEP_TYPE::JOB || step.type == STEP_TYPE::END) {
+        assert(0 < sample_rank_in_J);
+        increment -= std::min(sample_break_travel_margin,
+                              evals[sample_rank_in_J - 1].duration);
+        sample_break_travel_margin = 0;
+      }
+      earliest_date += increment;
     }
+    if (step.type == STEP_TYPE::START || step.type == STEP_TYPE::JOB) {
+      ++sample_rank_in_J;
+    }
+
+    const auto propagated_date = earliest_date;
     if (step.forced_service.at.has_value()) {
       earliest_date = std::max(earliest_date, step.forced_service.at.value());
     }
     if (step.forced_service.after.has_value()) {
       earliest_date =
         std::max(earliest_date, step.forced_service.after.value());
+    }
+    if (step.type == STEP_TYPE::BREAK) {
+      sample_break_travel_margin += (earliest_date - propagated_date);
     }
     if (earliest_date > latest_dates[s]) {
       throw InputException(
@@ -392,6 +448,23 @@ Route choose_ETA(const Input& input,
     }
   }
 
+  // Extend planning horizon so that it contains the sample solution
+  // and all user-forced service dates. This has to happen before
+  // deriving bounds below, otherwise bounds for steps prior to a
+  // forced date are computed from an outdated horizon.
+  horizon_start = std::min(horizon_start, start_candidate);
+  horizon_end = std::max(horizon_end, earliest_date);
+  for (const auto& step : steps) {
+    for (const auto& forced_date : {step.forced_service.at,
+                                    step.forced_service.after,
+                                    step.forced_service.before}) {
+      if (forced_date.has_value()) {
+        horizon_start = std::min(horizon_start, forced_date.value());
+        horizon_end = std::max(horizon_end, forced_date.value());
+      }
+    }
+  }
+
   // Retrieve user-provided upper bounds for t_i values. Retrieve
   // user-provided lower bounds for t_i values while propagating
   // travel/action constraints. Along the way, we store the rank of
@@ -402,6 +475,7 @@ Route choose_ETA(const Input& input,
   Duration previous_LB = horizon_start;
   Duration previous_action = 0;
   Duration previous_travel = evals.front().duration;
+  Duration forward_break_travel_margin = 0;
   std::vector<unsigned> first_relevant_tw_rank;
   Index rank_in_J = 0;
 
@@ -414,23 +488,14 @@ Route choose_ETA(const Input& input,
     Duration LB = horizon_start;
     Duration UB = horizon_end;
     if (step.forced_service.at.has_value()) {
-      const auto forced_at = step.forced_service.at.value();
-      horizon_start = std::min(horizon_start, forced_at);
-      horizon_end = std::max(horizon_end, forced_at);
-      LB = forced_at;
-      UB = forced_at;
+      LB = step.forced_service.at.value();
+      UB = step.forced_service.at.value();
     }
     if (step.forced_service.after.has_value()) {
-      const auto forced_after = step.forced_service.after.value();
-      horizon_start = std::min(horizon_start, forced_after);
-      horizon_end = std::max(horizon_end, forced_after);
-      LB = forced_after;
+      LB = step.forced_service.after.value();
     }
     if (step.forced_service.before.has_value()) {
-      const auto forced_before = step.forced_service.before.value();
-      horizon_start = std::min(horizon_start, forced_before);
-      horizon_end = std::max(horizon_end, forced_before);
-      UB = forced_before;
+      UB = step.forced_service.before.value();
     }
 
     // Now propagate some timing constraints for tighter lower bounds.
@@ -438,25 +503,41 @@ Route choose_ETA(const Input& input,
       using enum STEP_TYPE;
     case START:
       previous_LB = LB;
+      forward_break_travel_margin = 0;
       ++rank_in_J;
       break;
     case JOB: {
-      LB = std::max(LB, previous_LB + previous_action + previous_travel);
+      const auto travel = (forward_break_travel_margin < previous_travel)
+                            ? previous_travel - forward_break_travel_margin
+                            : 0;
+      LB = std::max(LB, previous_LB + previous_action + travel);
       previous_LB = LB;
       previous_action = action_times[rank_in_J];
       previous_travel = evals[rank_in_J].duration;
+      forward_break_travel_margin = 0;
       ++rank_in_J;
       break;
     }
     case BREAK: {
-      LB = std::max(LB, previous_LB + previous_action);
+      const auto candidate = previous_LB + previous_action;
+      if (candidate < LB) {
+        // User-provided constraints gives margin for travel before
+        // this break.
+        forward_break_travel_margin += (LB - candidate);
+      } else {
+        LB = candidate;
+      }
       previous_LB = LB;
       previous_action = v.breaks[step.rank].service;
       break;
     }
-    case END:
-      LB = std::max(LB, previous_LB + previous_action + previous_travel);
+    case END: {
+      const auto travel = (forward_break_travel_margin < previous_travel)
+                            ? previous_travel - forward_break_travel_margin
+                            : 0;
+      LB = std::max(LB, previous_LB + previous_action + travel);
       break;
+    }
     }
     t_i_LB.push_back(LB);
     t_i_UB.push_back(UB);
@@ -505,11 +586,15 @@ Route choose_ETA(const Input& input,
 
     switch (step.type) {
       using enum STEP_TYPE;
-    case START:
+    case START: {
       assert(rank_in_J == 1);
-      t_i_UB[step_rank] =
-        std::min(t_i_UB[step_rank], next_UB - evals[0].duration);
+      const auto next_travel = (break_travel_margin < evals[0].duration)
+                                 ? evals[0].duration - break_travel_margin
+                                 : 0;
+      assert(next_travel <= next_UB);
+      t_i_UB[step_rank] = std::min(t_i_UB[step_rank], next_UB - next_travel);
       break;
+    }
     case JOB: {
       --rank_in_J;
       const auto action = action_times[rank_in_J];
@@ -574,9 +659,10 @@ Route choose_ETA(const Input& input,
   assert(B.size() == nb_delta_constraints);
   assert(evals.size() == nb_delta_constraints);
 
-  // 1. create problem.
-  glp_prob* lp;
-  lp = glp_create_prob();
+  // 1. create problem. The guard ensures glpk resources are released
+  // on all exit paths, including when throwing.
+  const GLPKProblem glpk_problem;
+  glp_prob* lp = glpk_problem.lp;
   glp_set_prob_name(lp, "choose_ETA");
   glp_set_obj_dir(lp, GLP_MIN);
 
@@ -762,9 +848,9 @@ Route choose_ETA(const Input& input,
   assert(current_col == nb_var + 1);
 
   // Define non-zero elements in matrix.
-  auto* ia = new int[1 + nb_non_zero];
-  auto* ja = new int[1 + nb_non_zero];
-  auto* ar = new double[1 + nb_non_zero];
+  std::vector<int> ia(1 + nb_non_zero);
+  std::vector<int> ja(1 + nb_non_zero);
+  std::vector<double> ar(1 + nb_non_zero);
 
   unsigned r = 1;
   // Coefficients for precedence constraints.
@@ -973,11 +1059,7 @@ Route choose_ETA(const Input& input,
   }
   assert(r == nb_non_zero + 1);
 
-  glp_load_matrix(lp, nb_non_zero, ia, ja, ar);
-
-  delete[] ia;
-  delete[] ja;
-  delete[] ar;
+  glp_load_matrix(lp, nb_non_zero, ia.data(), ja.data(), ar.data());
 
   // 4. Solve for violations and makespan.
   glp_term_out(GLP_OFF);
@@ -988,7 +1070,7 @@ Route choose_ETA(const Input& input,
   // https://lists.gnu.org/archive/html/bug-glpk/2020-11/msg00001.html
   parm.br_tech = GLP_BR_MFV;
 
-  glp_intopt(lp, &parm);
+  run_intopt(lp, parm, v.id);
 
   auto status = glp_mip_status(lp);
   if (status == GLP_UNDEF || status == GLP_NOFEAS) {
@@ -1022,22 +1104,20 @@ Route choose_ETA(const Input& input,
     glp_set_obj_coef(lp, i, M);
   }
 
-  // Add constraint to fix makespan.
-  const Duration best_makespan = get_duration(glp_mip_col_val(lp, n + 2)) -
-                                 get_duration(glp_mip_col_val(lp, 1));
-  glp_set_row_bnds(lp,
-                   nb_constraints - 1,
-                   GLP_FX,
-                   best_makespan,
-                   best_makespan);
-  // Pin Y_i sum.
-  Duration sum_y_i = 0;
+  // Add constraint to bound makespan. Using unrounded values and
+  // upper bounds avoids an infeasible second phase due to rounding,
+  // while lower values are ruled out by optimality of first phase.
+  const double best_makespan =
+    glp_mip_col_val(lp, n + 2) - glp_mip_col_val(lp, 1);
+  glp_set_row_bnds(lp, nb_constraints - 1, GLP_UP, 0.0, best_makespan);
+  // Bound Y_i sum.
+  double sum_y_i = 0;
   for (unsigned i = start_Y_col; i < start_X_col; ++i) {
-    sum_y_i += get_duration(glp_mip_col_val(lp, i));
+    sum_y_i += glp_mip_col_val(lp, i);
   }
-  glp_set_row_bnds(lp, nb_constraints, GLP_FX, sum_y_i, sum_y_i);
+  glp_set_row_bnds(lp, nb_constraints, GLP_UP, 0.0, sum_y_i);
 
-  glp_intopt(lp, &parm);
+  run_intopt(lp, parm, v.id);
 
   status = glp_mip_status(lp);
   if (status == GLP_UNDEF || status == GLP_NOFEAS) {
@@ -1346,12 +1426,20 @@ Route choose_ETA(const Input& input,
       user_previous_end =
         current.arrival + current.waiting_time + current.service;
 
-      // Pro rata temporis distance increase.
-      if (evals[previous_rank_in_J].duration != 0) {
+      // Pro rata temporis distance increase. Guard on the actual
+      // divisor: a non-zero internal duration may scale down to 0.
+      if (const auto user_eval_duration =
+            utils::scale_to_user_duration(evals[previous_rank_in_J].duration);
+          user_eval_duration != 0) {
         breaks_distances_sum += utils::round<UserDistance>(
           static_cast<double>(user_travel_time *
                               evals[previous_rank_in_J].distance) /
-          utils::scale_to_user_duration(evals[previous_rank_in_J].duration));
+          user_eval_duration);
+        // Rounding to user durations may lead to a ratio above 1.
+        breaks_distances_sum =
+          std::min(breaks_distances_sum,
+                   static_cast<UserDistance>(
+                     distances_sum + evals[previous_rank_in_J].distance));
       }
       current.distance = breaks_distances_sum;
 
@@ -1450,9 +1538,6 @@ Route choose_ETA(const Input& input,
   assert(utils::scale_to_user_duration(
            get_duration(glp_mip_col_val(lp, 2 * n + 4))) ==
          sol_steps.back().violations.delay);
-
-  glp_delete_prob(lp);
-  glp_free_env();
 
   // Precedence violations for pickups without a delivery.
   for (const auto d_rank : expected_delivery_ranks) {

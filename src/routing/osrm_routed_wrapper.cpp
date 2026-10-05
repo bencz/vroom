@@ -7,6 +7,8 @@ All rights reserved (see LICENSE).
 
 */
 
+#include <charconv>
+
 #include "routing/osrm_routed_wrapper.h"
 
 namespace vroom::routing {
@@ -65,21 +67,29 @@ OsrmRoutedWrapper::build_query(const std::vector<Location>& locations,
 void OsrmRoutedWrapper::check_response(const rapidjson::Document& json_result,
                                        const std::vector<Location>& locs,
                                        const std::string&) const {
-  assert(json_result.HasMember("code"));
-  const std::string code = json_result["code"].GetString();
+  const std::string code = get_string(json_result, "code");
   if (code != "Ok") {
-    const std::string message = json_result["message"].GetString();
+    std::string message = code;
+    if (json_result.HasMember("message") && json_result["message"].IsString()) {
+      message = json_result["message"].GetString();
+    }
+
     if (const std::string snapping_error_base =
           "Could not find a matching segment for coordinate ";
         code == "NoSegment" && message.starts_with(snapping_error_base)) {
-      const auto error_loc =
-        std::stoul(message.substr(snapping_error_base.size(),
-                                  message.size() - snapping_error_base.size()));
-      const auto coordinates = std::format("[{:.6f},{:.6f}]",
-                                           locs[error_loc].lon(),
-                                           locs[error_loc].lat());
-      throw RoutingException("Could not find route near location " +
-                             coordinates);
+      std::size_t error_loc = 0;
+      const char* const index_start =
+        message.data() + snapping_error_base.size();
+      const char* const index_end = message.data() + message.size();
+      if (const auto [ptr, ec] =
+            std::from_chars(index_start, index_end, error_loc);
+          ec == std::errc() && ptr != index_start && error_loc < locs.size()) {
+        const auto coordinates = std::format("[{:.6f},{:.6f}]",
+                                             locs[error_loc].lon(),
+                                             locs[error_loc].lat());
+        throw RoutingException("Could not find route near location " +
+                               coordinates);
+      }
     }
 
     // Other error in response.
@@ -89,11 +99,7 @@ void OsrmRoutedWrapper::check_response(const rapidjson::Document& json_result,
 
 const rapidjson::Value&
 OsrmRoutedWrapper::get_legs(const rapidjson::Value& result) const {
-  assert(result.HasMember("routes") && result["routes"].IsArray() &&
-         !result["routes"].Empty() && result["routes"][0].HasMember("legs") &&
-         result["routes"][0]["legs"].IsArray());
-
-  return result["routes"][0]["legs"];
+  return get_array(get_first(result, "routes"), "legs");
 }
 
 } // namespace vroom::routing

@@ -22,10 +22,9 @@ UndirectedGraph<T>::UndirectedGraph(const Matrix<T>& m) : _size(m.size()) {
 #ifndef NDEBUG
   bool matrix_ok = true;
 #endif
-  _edges.reserve(_size * _size);
-  _adjacency_list.reserve(_size);
+  _edges.reserve(_size * (_size - 1) / 2);
   for (Index i = 0; i < _size; ++i) {
-    _adjacency_list[i].reserve(_size);
+    _adjacency_list[i].reserve(_size - 1);
   }
   for (Index i = 0; i < _size; ++i) {
 #ifndef NDEBUG
@@ -60,14 +59,15 @@ template <class T> std::size_t UndirectedGraph<T>::size() const {
   return _size;
 }
 
-template <class T> std::vector<Edge<T>> UndirectedGraph<T>::get_edges() const {
+template <class T>
+const std::vector<Edge<T>>& UndirectedGraph<T>::get_edges() const {
   return _edges;
 }
 
 template <class T>
-std::unordered_map<Index, std::list<Index>>
+std::map<Index, std::list<Index>>
 UndirectedGraph<T>::get_adjacency_list() const {
-  std::unordered_map<Index, std::list<Index>> result;
+  std::map<Index, std::list<Index>> result;
   for (const auto& [index, vector] : _adjacency_list) {
     std::ranges::copy(vector, std::back_inserter(result[index]));
   }

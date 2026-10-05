@@ -87,7 +87,9 @@ void IntraRelocate::apply() {
 }
 
 std::vector<Index> IntraRelocate::addition_candidates() const {
-  return {};
+  // Route may get shorter, leaving room for additions with regard to
+  // vehicle range bounds or time windows.
+  return {s_vehicle};
 }
 
 std::vector<Index> IntraRelocate::update_candidates() const {

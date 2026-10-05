@@ -99,7 +99,7 @@ public:
   std::vector<Duration> action_time;
 
   // Store earliest date for route end.
-  Duration earliest_end;
+  Duration earliest_end{0};
 
   // A vector with route.size() + 1 elements. breaks_at_rank[i] is the
   // number of breaks that are to be taken right before job at
@@ -158,7 +158,7 @@ public:
   // in the existing route at rank first_rank and before last_rank *in
   // place of* the current jobs that may be there. "delivery" is the
   // amount delivered in single jobs for inclusion range.
-  template <std::forward_iterator Iter>
+  template <std::random_access_iterator Iter>
   bool is_valid_addition_for_tw(const Input& input,
                                 const Amount& delivery,
                                 Iter first_job,

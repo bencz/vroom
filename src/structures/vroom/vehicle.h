@@ -38,7 +38,7 @@ struct VehicleCosts {
     : fixed(utils::scale_from_user_cost(fixed)),
       per_hour(static_cast<Cost>(per_hour)),
       per_km(static_cast<Cost>(per_km)),
-      per_task_hour(static_cast<Cost>(per_task_hour)){};
+      per_task_hour(static_cast<Cost>(per_task_hour)) {};
 
   friend bool operator==(const VehicleCosts& lhs,
                          const VehicleCosts& rhs) = default;

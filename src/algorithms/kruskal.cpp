@@ -7,61 +7,63 @@ All rights reserved (see LICENSE).
 
 */
 
-#include <algorithm>
-#include <numeric>
+#include <cassert>
+#include <limits>
 
 #include "algorithms/kruskal.h"
 
 namespace vroom::utils {
 
 template <class T>
-UndirectedGraph<T> minimum_spanning_tree(const UndirectedGraph<T>& graph) {
-  // We just need the edges from original graph.
-  std::vector<Edge<T>> edges = graph.get_edges();
+UndirectedGraph<T> minimum_spanning_tree(const Matrix<T>& m) {
+  // Prim algorithm on a dense symmetric matrix, in O(n^2) time and
+  // O(n) additional memory, with no need to build and sort all
+  // edges.
+  const std::size_t n = m.size();
 
-  // First sorting edges by weight.
-  std::ranges::sort(edges, [](const auto& a, const auto& b) {
-    return a.get_weight() < b.get_weight();
-  });
-
-  // Storing the edges of the minimum spanning tree.
   std::vector<Edge<T>> mst;
-  mst.reserve(graph.size() - 1);
+  if (n < 2) {
+    return UndirectedGraph<T>(std::move(mst));
+  }
+  mst.reserve(n - 1);
 
-  // During Kruskal algorithm, the number of connected components will
-  // decrease until we obtain a single component (the final tree). We
-  // use the smallest vertex as a representative of connected
-  // components.
-  std::vector<Index> representative(graph.size());
-  std::iota(representative.begin(), representative.end(), 0);
+  // key[v] is the lowest weight of an edge between v and the
+  // current tree, parent[v] is the matching tree vertex.
+  std::vector<T> key(n, std::numeric_limits<T>::max());
+  std::vector<Index> parent(n, 0);
+  std::vector<unsigned char> in_tree(n, false);
 
-  for (const auto& edge : edges) {
-    const Index first_vertex = edge.get_first_vertex();
-    const Index second_vertex = edge.get_second_vertex();
+  Index current = 0;
+  for (std::size_t step = 0; step < n; ++step) {
+    in_tree[current] = true;
+    if (step > 0) {
+      mst.emplace_back(parent[current], current, m[parent[current]][current]);
+    }
 
-    const Index first_rep = representative[first_vertex];
-    const Index second_rep = representative[second_vertex];
-    if (first_rep != second_rep) {
-      // Adding current edge won't create a cycle as vertices are in
-      // separate connected components.
-      mst.push_back(edge);
-      // Both vertices are now in the same connected component,
-      // setting new representative for all elements of second
-      // component. Relies on first_vertex < second_vertex (see edge
-      // ctor).
-      for (auto& e : representative) {
-        if (e == second_rep) {
-          e = first_rep;
-        }
+    // Update keys based on new tree vertex and spot next vertex.
+    T best_key = std::numeric_limits<T>::max();
+    Index next = current;
+    for (std::size_t v = 0; v < n; ++v) {
+      if (in_tree[v]) {
+        continue;
+      }
+      if (m[current][v] < key[v]) {
+        key[v] = m[current][v];
+        parent[v] = current;
+      }
+      if (key[v] < best_key) {
+        best_key = key[v];
+        next = static_cast<Index>(v);
       }
     }
+    current = next;
   }
-  assert(mst.size() == graph.size() - 1);
+  assert(mst.size() == n - 1);
 
   return UndirectedGraph<T>(std::move(mst));
 }
 
 template UndirectedGraph<UserCost>
-minimum_spanning_tree(const UndirectedGraph<UserCost>& graph);
+minimum_spanning_tree(const Matrix<UserCost>& m);
 
 } // namespace vroom::utils

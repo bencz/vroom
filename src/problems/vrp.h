@@ -11,10 +11,10 @@ All rights reserved (see LICENSE).
 */
 
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <numeric>
 #include <ranges>
-#include <semaphore>
 #include <set>
 #include <thread>
 
@@ -51,14 +51,15 @@ template <class Route> struct SolvingContext {
   std::vector<std::vector<Route>> solutions;
   std::vector<utils::SolutionIndicators> sol_indicators;
 
-  std::set<utils::SolutionIndicators> heuristic_indicators;
-  std::mutex heuristic_indicators_m;
+  // Time spent in heuristic for each search.
+  std::vector<std::chrono::milliseconds> heuristic_times;
 
   SolvingContext(const Input& input, unsigned nb_searches)
     : init_sol(set_init_sol<Route>(input, init_assigned)),
       vehicles_ranks(input.vehicles.size()),
       solutions(nb_searches, init_sol),
-      sol_indicators(nb_searches) {
+      sol_indicators(nb_searches),
+      heuristic_times(nb_searches) {
 
     // Deduce unassigned jobs from initial solution.
     std::ranges::copy_if(std::views::iota(0u, input.jobs.size()),
@@ -71,44 +72,46 @@ template <class Route> struct SolvingContext {
     std::iota(vehicles_ranks.begin(), vehicles_ranks.end(), 0);
   }
 
-  bool heuristic_solution_already_found(unsigned rank) {
+  // A heuristic solution is considered a duplicate if it has already
+  // been found for a lower rank. This only depends on searches
+  // parameters, not on threads scheduling.
+  bool heuristic_solution_already_found(unsigned rank) const {
     assert(rank < sol_indicators.size());
-    const std::scoped_lock<std::mutex> lock(heuristic_indicators_m);
-    const auto [dummy, insertion_ok] =
-      heuristic_indicators.insert(sol_indicators[rank]);
-
-    return !insertion_ok;
+    return std::ranges::any_of(std::views::iota(0u, rank),
+                               [&](const unsigned other_rank) {
+                                 return !(sol_indicators[other_rank] <
+                                          sol_indicators[rank]) &&
+                                        !(sol_indicators[rank] <
+                                          sol_indicators[other_rank]);
+                               });
   }
 };
 
-template <class Route, class LocalSearch>
-void run_single_search(const Input& input,
-                       const HeuristicParameters& p,
-                       const unsigned rank,
-                       const unsigned depth,
-                       const Timeout& search_time,
-                       SolvingContext<Route>& context) {
+template <class Route>
+void run_heuristic(const Input& input,
+                   const HeuristicParameters& p,
+                   const unsigned rank,
+                   SolvingContext<Route>& context) {
   const auto heuristic_start = utils::now();
 
-  Eval h_eval;
   switch (p.heuristic) {
   case HEURISTIC::BASIC:
-    h_eval = heuristics::basic<Route>(input,
-                                      context.solutions[rank],
-                                      context.unassigned,
-                                      context.vehicles_ranks,
-                                      p.init,
-                                      p.regret_coeff,
-                                      p.sort);
+    heuristics::basic<Route>(input,
+                             context.solutions[rank],
+                             context.unassigned,
+                             context.vehicles_ranks,
+                             p.init,
+                             p.regret_coeff,
+                             p.sort);
     break;
   case HEURISTIC::DYNAMIC:
-    h_eval = heuristics::dynamic_vehicle_choice<Route>(input,
-                                                       context.solutions[rank],
-                                                       context.unassigned,
-                                                       context.vehicles_ranks,
-                                                       p.init,
-                                                       p.regret_coeff,
-                                                       p.sort);
+    heuristics::dynamic_vehicle_choice<Route>(input,
+                                              context.solutions[rank],
+                                              context.unassigned,
+                                              context.vehicles_ranks,
+                                              p.init,
+                                              p.regret_coeff,
+                                              p.sort);
     break;
   }
 
@@ -117,50 +120,53 @@ void run_single_search(const Input& input,
     // heuristic.
     std::vector<Route> other_sol = context.init_sol;
 
-    Eval h_other_eval;
     switch (p.heuristic) {
     case HEURISTIC::BASIC:
-      h_other_eval = heuristics::basic<Route>(input,
-                                              other_sol,
-                                              context.unassigned,
-                                              context.vehicles_ranks,
-                                              p.init,
-                                              p.regret_coeff,
-                                              SORT::COST);
+      heuristics::basic<Route>(input,
+                               other_sol,
+                               context.unassigned,
+                               context.vehicles_ranks,
+                               p.init,
+                               p.regret_coeff,
+                               SORT::COST);
       break;
     case HEURISTIC::DYNAMIC:
-      h_other_eval =
-        heuristics::dynamic_vehicle_choice<Route>(input,
-                                                  other_sol,
-                                                  context.unassigned,
-                                                  context.vehicles_ranks,
-                                                  p.init,
-                                                  p.regret_coeff,
-                                                  SORT::COST);
+      heuristics::dynamic_vehicle_choice<Route>(input,
+                                                other_sol,
+                                                context.unassigned,
+                                                context.vehicles_ranks,
+                                                p.init,
+                                                p.regret_coeff,
+                                                SORT::COST);
       break;
     }
 
-    if (h_other_eval < h_eval) {
+    // Compare whole solutions, accounting for assigned jobs and
+    // priorities, not only cost.
+    if (utils::SolutionIndicators(input, other_sol) <
+        utils::SolutionIndicators(input, context.solutions[rank])) {
       context.solutions[rank] = std::move(other_sol);
     }
   }
 
-  // Check if heuristic solution has been encountered before.
+  // Store heuristic solution indicators.
   context.sol_indicators[rank] =
     utils::SolutionIndicators(input, context.solutions[rank]);
 
-  const auto heuristic_end = utils::now();
+  context.heuristic_times[rank] =
+    std::chrono::duration_cast<std::chrono::milliseconds>(utils::now() -
+                                                          heuristic_start);
+}
 
-  if (context.heuristic_solution_already_found(rank)) {
-    // Duplicate heuristic solution, so skip local search.
-    return;
-  }
-
+template <class Route, class LocalSearch>
+void run_local_search(const Input& input,
+                      const unsigned rank,
+                      const unsigned depth,
+                      const Timeout& search_time,
+                      SolvingContext<Route>& context) {
   Timeout ls_search_time;
   if (search_time.has_value()) {
-    const auto heuristic_time =
-      std::chrono::duration_cast<std::chrono::milliseconds>(heuristic_end -
-                                                            heuristic_start);
+    const auto heuristic_time = context.heuristic_times[rank];
 
     if (search_time.value() <= heuristic_time) {
       // No time left for local search!
@@ -200,12 +206,8 @@ protected:
 
     SolvingContext<Route> context(_input, nb_searches);
 
-    std::exception_ptr ep = nullptr;
-    std::mutex ep_m;
-
     const auto actual_nb_threads = std::min(nb_searches, nb_threads);
-    assert(actual_nb_threads <= 32);
-    std::counting_semaphore<32> semaphore(actual_nb_threads);
+    assert(actual_nb_threads > 0);
 
     Timeout search_time;
     if (timeout.has_value()) {
@@ -216,44 +218,67 @@ protected:
       search_time = timeout.value() / max_solving_number;
     }
 
-    auto run_solving = [&context,
-                        &semaphore,
-                        &search_time,
-                        &parameters,
-                        &timeout,
-                        &ep,
-                        &ep_m,
-                        depth,
-                        this](const unsigned rank) {
-      semaphore.acquire();
-      try {
-        run_single_search<Route, LocalSearch>(_input,
-                                              parameters[rank],
-                                              rank,
-                                              depth,
-                                              search_time,
-                                              context);
-      } catch (...) {
-        const std::scoped_lock<std::mutex> lock(ep_m);
-        ep = std::current_exception();
+    // Run f on all provided ranks using a pool of threads.
+    auto run_on_ranks = [actual_nb_threads](const std::vector<unsigned>& ranks,
+                                            const auto& f) {
+      std::atomic<std::size_t> next_rank_index{0};
+      std::exception_ptr ep = nullptr;
+      std::mutex ep_m;
+
+      auto worker = [&]() {
+        for (auto i = next_rank_index++; i < ranks.size();
+             i = next_rank_index++) {
+          try {
+            f(ranks[i]);
+          } catch (...) {
+            const std::scoped_lock<std::mutex> lock(ep_m);
+            ep = std::current_exception();
+          }
+        }
+      };
+
+      {
+        std::vector<std::jthread> threads;
+        const auto nb_workers =
+          std::min(static_cast<std::size_t>(actual_nb_threads), ranks.size());
+        threads.reserve(nb_workers);
+        for (std::size_t t = 0; t < nb_workers; ++t) {
+          threads.emplace_back(worker);
+        }
       }
-      semaphore.release();
+
+      if (ep != nullptr) {
+        std::rethrow_exception(ep);
+      }
     };
 
-    std::vector<std::jthread> solving_threads;
-    solving_threads.reserve(nb_searches);
+    // Heuristics phase.
+    std::vector<unsigned> all_ranks(nb_searches);
+    std::iota(all_ranks.begin(), all_ranks.end(), 0);
 
-    for (unsigned i = 0; i < nb_searches; ++i) {
-      solving_threads.emplace_back(run_solving, i);
-    }
+    run_on_ranks(all_ranks, [&](const unsigned rank) {
+      run_heuristic<Route>(_input, parameters[rank], rank, context);
+    });
 
-    for (auto& t : solving_threads) {
-      t.join();
-    }
+    // Skip local search for duplicate heuristic solutions. This is
+    // done after all heuristics are computed so that the outcome does
+    // not depend on threads scheduling.
+    std::vector<unsigned> ls_ranks;
+    std::ranges::copy_if(all_ranks,
+                         std::back_inserter(ls_ranks),
+                         [&](const unsigned rank) {
+                           return !context.heuristic_solution_already_found(
+                             rank);
+                         });
 
-    if (ep != nullptr) {
-      std::rethrow_exception(ep);
-    }
+    // Local search phase.
+    run_on_ranks(ls_ranks, [&](const unsigned rank) {
+      run_local_search<Route, LocalSearch>(_input,
+                                           rank,
+                                           depth,
+                                           search_time,
+                                           context);
+    });
 
     auto best_indic = std::min_element(context.sol_indicators.cbegin(),
                                        context.sol_indicators.cend());

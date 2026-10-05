@@ -44,6 +44,8 @@ void PDShift::compute_gain() {
                                             s_route.begin() + _s_d_rank,
                                             _s_p_rank,
                                             _s_d_rank + 1)) {
+    // Invalid move, gain is still considered computed.
+    gain_computed = true;
     return;
   }
 

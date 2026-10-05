@@ -52,10 +52,13 @@ bool Location::user_index() const {
 }
 
 bool Location::operator==(const Location& other) const {
-  return (this->user_index() && other.user_index() &&
-          (this->index() == other.index())) ||
-         (this->has_coordinates() && other.has_coordinates() &&
-          (this->lon() == other.lon()) && (this->lat() == other.lat()));
+  if (this->user_index() || other.user_index()) {
+    return this->user_index() && other.user_index() &&
+           (this->index() == other.index());
+  }
+
+  assert(this->has_coordinates() && other.has_coordinates());
+  return (this->lon() == other.lon()) && (this->lat() == other.lat());
 }
 
 } // namespace vroom
